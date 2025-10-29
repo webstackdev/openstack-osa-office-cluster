@@ -1,0 +1,27 @@
+FROM ubuntu:24.04
+
+# Install systemd and other required packages
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        systemd \
+        systemd-sysv \
+        sudo \
+        python3 \
+        python3-pip \
+        curl \
+        wget \
+        git \
+        vim \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Remove unnecessary systemd services
+RUN systemctl mask \
+    dev-hugepages.mount \
+    sys-fs-fuse-connections.mount \
+    sys-kernel-config.mount \
+    display-manager.service \
+    graphical.target \
+    systemd-logind.service
+
+CMD ["/lib/systemd/systemd"]

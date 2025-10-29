@@ -1,0 +1,35 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Verify required packages are installed
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      check_mode: true
+      register: verify_packages
+      failed_when: verify_packages.changed
+      loop:
+        - bridge-utils
+        - tcpdump
+        - vlan
+        - python3
+
+    - name: Check if bridge-utils command is available
+      ansible.builtin.command: which brctl
+      changed_when: false
+      register: brctl_check
+
+    - name: Verify brctl is in PATH
+      ansible.builtin.assert:
+        that:
+          - brctl_check.rc == 0
+        fail_msg: "brctl command not found in PATH"
+        success_msg: "brctl command is available"
+
+    - name: Display verification success
+      ansible.builtin.debug:
+        msg: "All packages verified successfully!"

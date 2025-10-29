@@ -1,0 +1,9 @@
+---
+# vars file for vim
+vim_dir: "{{ lookup('env', 'HOME') }}/.vim"
+vim_rc: "{{ lookup('env', 'HOME') }}/.vimrc"
+vim_install_packages:
+  - vim-nox
+  - git
+  - fonts-powerline
+  - fzf

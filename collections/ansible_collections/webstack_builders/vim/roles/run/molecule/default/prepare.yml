@@ -1,0 +1,18 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check Python is available
+      ansible.builtin.raw: "python3 --version"
+      changed_when: false
+
+    - name: Gather facts after Python installation
+      ansible.builtin.setup:
+
+    - name: Ensure sudo is available
+      ansible.builtin.package:
+        name: sudo
+        state: present

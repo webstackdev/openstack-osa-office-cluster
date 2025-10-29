@@ -1,0 +1,5 @@
+# Ignore all downloaded collections
+ansible_collections/*
+
+# But keep our custom webstack_builders namespace
+!ansible_collections/webstack_builders/

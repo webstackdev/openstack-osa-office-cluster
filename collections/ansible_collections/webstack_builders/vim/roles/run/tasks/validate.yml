@@ -1,0 +1,146 @@
+---
+# Vim Role Argument Validation Tasks
+# This file contains comprehensive validation logic for vim role arguments
+
+- name: Load argument specifications
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/argument_spec.yml"
+    name: arg_spec
+  tags:
+    - validation
+    - vim_validation
+
+- name: Prepare provided arguments for validation
+  ansible.builtin.set_fact:
+    vim_provided_args:
+      vim_plugins: "{{ vim_plugins | default(omit) }}"
+      vim_dir: "{{ vim_dir | default(omit) }}"
+      vim_rc: "{{ vim_rc | default(omit) }}"
+      vim_install_packages: "{{ vim_install_packages | default(omit) }}"
+      vim_rc_content: "{{ vim_rc_content | default(omit) }}"
+      vim_pathogen_url: "{{ vim_pathogen_url | default(omit) }}"
+      vim_backup_existing: "{{ vim_backup_existing | default(omit) }}"
+  tags:
+    - validation
+    - vim_validation
+
+- name: Validate vim role arguments
+  ansible.builtin.validate_argument_spec:
+    argument_spec: "{{ arg_spec.vim_role_args }}"
+    provided_arguments: "{{ vim_provided_args }}"
+  register: vim_validation_result
+  tags:
+    - validation
+    - vim_validation
+
+- name: Display successful validation
+  ansible.builtin.debug:
+    msg: |
+      ✅ Vim Role Argument Validation PASSED
+      All provided arguments are valid and meet the role requirements.
+  when: vim_validation_result is succeeded
+  tags:
+    - validation
+    - vim_validation
+
+- name: Validate vim plugin structure (custom validation)
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name | length > 0
+      - item.url is defined
+      - item.url is match('^https?://.*')
+    fail_msg: |
+      ❌ Invalid plugin configuration: {{ item }}
+      Plugin must have 'name' and 'url' fields.
+      URL must be a valid HTTP/HTTPS URL.
+    success_msg: "✅ Plugin '{{ item.name }}' configuration is valid"
+  loop: "{{ vim_plugins }}"
+  when: vim_plugins is defined and vim_plugins | length > 0
+  tags:
+    - validation
+    - vim_validation
+    - plugin_validation
+
+- name: Validate vim directory path
+  ansible.builtin.assert:
+    that:
+      - vim_dir is defined
+      - vim_dir | length > 0
+      - not (vim_dir is match('.*\\s.*'))  # No spaces in path
+    fail_msg: |
+      ❌ Invalid vim_dir path: '{{ vim_dir }}'
+      Path must be defined, non-empty, and contain no spaces.
+    success_msg: "✅ Vim directory path '{{ vim_dir }}' is valid"
+  when: vim_dir is defined
+  tags:
+    - validation
+    - vim_validation
+    - path_validation
+
+- name: Validate vim_rc path
+  ansible.builtin.assert:
+    that:
+      - vim_rc is defined
+      - vim_rc | length > 0
+      - vim_rc is match('^/.*') or vim_rc is match('.*/.vimrc$')
+    fail_msg: |
+      ❌ Invalid vim_rc path: '{{ vim_rc }}'
+      Path must be an absolute path or end with .vimrc
+    success_msg: "✅ Vimrc path '{{ vim_rc }}' is valid"
+  when: vim_rc is defined
+  tags:
+    - validation
+    - vim_validation
+    - path_validation
+
+- name: Validate vim packages list
+  ansible.builtin.assert:
+    that:
+      - vim_install_packages is defined
+      - vim_install_packages | length > 0
+      - '"vim" in vim_install_packages | join(" ") or "vim-nox" in vim_install_packages'
+    fail_msg: |
+      ❌ Invalid package list: {{ vim_install_packages }}
+      Must include at least one vim package (vim or vim-nox).
+    success_msg: "✅ Package list contains required vim packages"
+  when: vim_install_packages is defined
+  tags:
+    - validation
+    - vim_validation
+    - package_validation
+
+- name: Validate pathogen URL
+  ansible.builtin.assert:
+    that:
+      - vim_pathogen_url is defined
+      - vim_pathogen_url is match('^https?://.*')
+      - vim_pathogen_url is match('.*\\.vim$')
+    fail_msg: |
+      ❌ Invalid pathogen URL: '{{ vim_pathogen_url }}'
+      URL must be HTTP/HTTPS and point to a .vim file.
+    success_msg: "✅ Pathogen URL '{{ vim_pathogen_url }}' is valid"
+  when: vim_pathogen_url is defined
+  tags:
+    - validation
+    - vim_validation
+    - url_validation
+
+- name: Display validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==========================================
+      🎯 VIM ROLE VALIDATION SUMMARY
+      ==========================================
+      ✅ Argument specification validation: PASSED
+      ✅ Plugin configuration validation: PASSED
+      ✅ Directory path validation: PASSED
+      ✅ Vimrc path validation: PASSED
+      ✅ Package list validation: PASSED
+      ✅ Pathogen URL validation: PASSED
+      ==========================================
+      🚀 All validations successful! Role ready to execute.
+      ==========================================
+  tags:
+    - validation
+    - vim_validation

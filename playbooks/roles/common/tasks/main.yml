@@ -1,0 +1,8 @@
+---
+- name: Display all collected facts
+  hosts: mgmt.cloud-4core.local
+  gather_facts: true
+  tasks:
+    - name: Print the full facts dictionary
+      ansible.builtin.debug:
+        var: ansible_facts

@@ -1,0 +1,40 @@
+---
+- name: Converge - Setup
+  hosts: localhost
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Create test user
+      ansible.builtin.user:
+        name: testuser
+        home: /home/testuser
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+- name: Converge - Configure vim
+  hosts: localhost
+  become: true
+  become_user: testuser
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    - name: Include vim role
+      ansible.builtin.include_role:
+        name: "../../../"
+      vars:
+        vim_dir: /home/testuser/.vim
+        vim_rc: /home/testuser/.vimrc
+        vim_plugins:
+          - name: vim-airline
+            url: https://github.com/vim-airline/vim-airline
+          - name: nerdtree
+            url: https://github.com/preservim/nerdtree

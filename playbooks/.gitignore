@@ -1,0 +1,6 @@
+.ansible/
+*.retry
+*.log
+*.swp
+*.bak
+*~

@@ -1,0 +1,69 @@
+---
+# Vim Role Argument Specifications
+# This file defines validation rules for vim role arguments
+vim_role_args:
+  vim_plugins:
+    type: list
+    description: "List of vim plugins to install via git repositories."
+    required: false
+    default:
+      - name: vim-airline
+        url: https://github.com/vim-airline/vim-airline
+      - name: nerdtree
+        url: https://github.com/preservim/nerdtree
+      - name: fzf-vim
+        url: https://github.com/junegunn/fzf.vim
+      - name: vim-gitgutter
+        url: https://github.com/airblade/vim-gitgutter
+      - name: vim-fugitive
+        url: https://github.com/tpope/vim-fugitive
+    elements: dict
+    options:
+      name:
+        type: str
+        required: true
+        description: "Name of the vim plugin (used as directory name)."
+      url:
+        type: str
+        required: true
+        description: "Git repository URL for the plugin."
+
+  vim_dir:
+    type: path
+    description: "Directory where vim configuration and plugins will be stored."
+    required: false
+    default: "{{ lookup('env', 'HOME') }}/.vim"
+
+  vim_rc:
+    type: path
+    description: "Path to the vimrc configuration file."
+    required: false
+    default: "{{ lookup('env', 'HOME') }}/.vimrc"
+
+  vim_install_packages:
+    type: list
+    description: "List of system packages required for vim functionality."
+    required: false
+    default:
+      - vim-nox
+      - git
+      - fonts-powerline
+      - fzf
+    elements: str
+
+  vim_rc_content:
+    type: str
+    description: "Custom content for the vimrc file. If not provided, uses default template."
+    required: false
+
+  vim_pathogen_url:
+    type: str
+    description: "URL to download pathogen plugin manager."
+    required: false
+    default: "https://tpo.pe/pathogen.vim"
+
+  vim_backup_existing:
+    type: bool
+    description: "Whether to backup existing vim configuration files."
+    required: false
+    default: true

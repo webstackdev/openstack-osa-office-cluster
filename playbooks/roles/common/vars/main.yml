@@ -1,0 +1,7 @@
+---
+# Variables specific to a role that are intended to have a higher precedence than defaults and often represent
+# values that are less likely to be overridden by external sources. Has a higher precedence than defaults/main.yml
+# and many other variable sources like inventory variables and group variables. It can still be overridden by
+# higher-precedence sources like set_fact, registered variables, or extra variables passed on the command line.
+# Suitable for defining role-specific variables that are crucial for the role's functionality and should generally not
+# be easily changed by inventory or group variables, but can still be overridden when absolutely necessary.

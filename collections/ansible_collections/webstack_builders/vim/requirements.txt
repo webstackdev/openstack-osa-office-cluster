@@ -1,0 +1,11 @@
+# Testing dependencies for webstack_builders.vim collection
+pytest>=7.0.0
+pytest-ansible>=4.0.0
+pytest-xdist>=3.0.0
+molecule>=6.0.0
+molecule-plugins>=23.0.0
+molecule-podman>=2.0.0
+
+# Optional: For enhanced test output
+pytest-sugar>=0.9.0
+pytest-cov>=4.0.0

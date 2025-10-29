@@ -1,0 +1,53 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+    force: false
+
+driver:
+  name: podman
+  options:
+    managed: false
+    ansible_connection_options:
+      ansible_connection: local
+
+platforms:
+  - name: instance
+    image: ubuntu:24.04
+    dockerfile: Dockerfile.j2
+    pre_build_image: false
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: /usr/bin/python3
+      callback_whitelist: profile_tasks, timer, yaml
+      stdout_callback: yaml
+    ssh_connection:
+      pipelining: false
+  inventory:
+    host_vars:
+      instance:
+        ansible_user: root
+        ansible_python_interpreter: /usr/bin/python3
+
+verifier:
+  name: ansible
+
+scenario:
+  name: default
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

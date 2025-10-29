@@ -1,0 +1,61 @@
+---
+- name: Update apt package cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ install_packages_cache_valid_time }}"
+  when: install_packages_update_cache | bool
+  tags:
+    - install_packages
+    - update_cache
+
+- name: Upgrade all packages to latest version (dist-upgrade)
+  ansible.builtin.apt:
+    upgrade: dist
+    update_cache: false
+    autoremove: "{{ install_packages_autoremove | bool }}"
+  when: install_packages_dist_upgrade | bool
+  register: install_packages_upgrade_result
+  tags:
+    - install_packages
+    - upgrade
+
+- name: Install required packages for OpenStack node
+  ansible.builtin.apt:
+    name: "{{ install_packages_list }}"
+    state: present
+    update_cache: false
+  tags:
+    - install_packages
+
+- name: Get current kernel version
+  ansible.builtin.command: uname -r
+  register: install_packages_kernel_version
+  changed_when: false
+  check_mode: false
+  tags:
+    - install_packages
+    - kernel_extras
+
+- name: Install kernel extra modules for current kernel
+  ansible.builtin.apt:
+    name: "linux-modules-extra-{{ install_packages_kernel_version.stdout }}"
+    state: present
+    update_cache: false
+  when: install_packages_kernel_extras | bool
+  register: install_packages_kernel_result
+  failed_when: false
+  tags:
+    - install_packages
+    - kernel_extras
+
+- name: Reboot the system if kernel was upgraded or reboot is requested
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ install_packages_reboot_timeout }}"
+    msg: "Reboot initiated by Ansible for kernel/package updates"
+  when:
+    - install_packages_reboot | bool
+    - (install_packages_upgrade_result.changed | default(false)) or
+      (install_packages_kernel_result.changed | default(false))
+  tags:
+    - install_packages
+    - reboot
