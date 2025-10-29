@@ -1,5 +1,0 @@
----
-# Default values for variables used within a role. These are intended to be easily overridden by other variable sources.
-# Has the lowest precedence among all variable sources in Ansible. This means almost any other method of defining a
-# variable (e.g., inventory variables, group variables, host variables, play variables, vars/main.yml, set_fact, extra
-# vars) will override a variable defined in defaults/main.yml.

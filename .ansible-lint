@@ -1,0 +1,18 @@
+---
+exclude_paths:
+  - playbooks/requirements.yml
+
+# Skip var-naming rule for molecule test files since they're role consumers
+# passing parameters to roles, not defining internal role variables
+skip_list:
+  - var-naming[no-role-prefix]
+
+# Only apply var-naming check to specific paths
+warn_list:
+  - var-naming[no-role-prefix]
+
+# Exclude molecule test directories from var-naming enforcement
+kinds:
+  - playbook: "**/molecule/**/converge.yml"
+    skip_ansible_lint:
+      - var-naming[no-role-prefix]

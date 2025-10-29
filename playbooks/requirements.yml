@@ -1,5 +1,9 @@
 ---
 collections:
   - name: webstack_builders.vim
-    source: /home/kevin/Repos/home-cloud/collections/ansible_collections/webstack_builders/vim
+    source: ../collections/ansible_collections/webstack_builders/vim
+    type: dir
+
+  - name: webstack_builders.setup_node
+    source: ../collections/ansible_collections/webstack_builders/setup_node
     type: dir
