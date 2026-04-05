@@ -1,41 +1,106 @@
 ---
-- name: Backup existing netplan configuration
-  ansible.builtin.shell: |
-    cp /etc/netplan/*.yaml /etc/netplan/backup/ 2>/dev/null || true
-  args:
-    creates: /etc/netplan/backup/
+# Bridges are created via NetworkManager (nmcli) to avoid netplan/networkd
+# conflicts on Kubuntu desktop nodes. NM stores connections in
+# /etc/NetworkManager/system-connections/ and manages them natively.
 
-- name: Create netplan backup directory
-  ansible.builtin.file:
-    path: /etc/netplan/backup
-    state: directory
-    mode: "0755"
+- name: Stop and disable systemd-networkd
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - systemd-networkd
+    - systemd-networkd.socket
+  failed_when: false
 
-- name: Remove default netplan configs (will be replaced by bridge config)
-  ansible.builtin.shell: |
-    mv /etc/netplan/0*.yaml /etc/netplan/backup/ 2>/dev/null || true
-    mv /etc/netplan/5*.yaml /etc/netplan/backup/ 2>/dev/null || true
+- name: Mask systemd-networkd-wait-online
+  ansible.builtin.systemd:
+    name: systemd-networkd-wait-online.service
+    masked: true
+
+- name: Deploy NetworkManager unmanaged-devices config
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/99-openstack-unmanaged.conf
+    mode: "0644"
+    content: |
+      [keyfile]
+      unmanaged-devices=interface-name:veth*;interface-name:ovs*;interface-name:br-int;interface-name:tap*;interface-name:qvo*;interface-name:qvb*;interface-name:qbr*;interface-name:o-hm*;interface-name:genev*
+  notify: reload networkmanager
+
+- name: Check if br-mgmt bridge already exists
+  ansible.builtin.command: nmcli -t -f NAME connection show
+  register: nm_connections
   changed_when: false
 
-- name: Deploy OpenStack bridge netplan configuration
-  ansible.builtin.template:
-    src: netplan-bridges.yaml.j2
-    dest: /etc/netplan/60-openstack-bridges.yaml
-    mode: "0600"
-  register: netplan_config
+- name: Create br-mgmt bridge
+  ansible.builtin.command: >
+    nmcli connection add type bridge con-name br-mgmt ifname br-mgmt
+    ipv4.method manual ipv4.addresses {{ mgmt_ip }}/24
+    ipv4.gateway {{ mgmt_gateway }} ipv4.dns {{ mgmt_gateway }}
+    ipv6.method disabled
+    bridge.stp no bridge.forward-delay 0
+    connection.autoconnect yes
+  when: "'br-mgmt' not in nm_connections.stdout"
 
-- name: Apply netplan configuration
-  ansible.builtin.command: netplan apply
-  when: netplan_config.changed
-  async: 45
-  poll: 0
-  register: netplan_apply
+- name: Create br-mgmt port
+  ansible.builtin.command: >
+    nmcli connection add type ethernet con-name br-mgmt-port-{{ mgmt_interface }}
+    ifname {{ mgmt_interface }} master br-mgmt connection.autoconnect yes
+  when: "'br-mgmt-port-' not in nm_connections.stdout"
 
-- name: Wait for network connectivity to restore
-  ansible.builtin.wait_for_connection:
-    delay: 5
-    timeout: 60
-  when: netplan_config.changed
+- name: Create br-vxlan bridge
+  ansible.builtin.command: >
+    nmcli connection add type bridge con-name br-vxlan ifname br-vxlan
+    ipv4.method manual ipv4.addresses {{ overlay_ip }}/24
+    ipv6.method disabled
+    bridge.stp no bridge.forward-delay 0
+    connection.autoconnect yes
+  when: "'br-vxlan' not in nm_connections.stdout"
+
+- name: Create br-vxlan port
+  ansible.builtin.command: >
+    nmcli connection add type ethernet con-name br-vxlan-port-{{ overlay_interface }}
+    ifname {{ overlay_interface }} master br-vxlan connection.autoconnect yes
+  when: "'br-vxlan-port-' not in nm_connections.stdout"
+
+- name: Create br-storage bridge
+  ansible.builtin.command: >
+    nmcli connection add type bridge con-name br-storage ifname br-storage
+    ipv4.method manual ipv4.addresses {{ storage_ip }}/24
+    ipv6.method disabled
+    bridge.stp no bridge.forward-delay 0
+    connection.autoconnect yes
+  when: "'br-storage' not in nm_connections.stdout"
+
+- name: Create br-storage port
+  ansible.builtin.command: >
+    nmcli connection add type ethernet con-name br-storage-port-{{ storage_interface }}
+    ifname {{ storage_interface }} master br-storage connection.autoconnect yes
+  when: "'br-storage-port-' not in nm_connections.stdout"
+
+- name: Create br-vlan bridge
+  ansible.builtin.command: >
+    nmcli connection add type bridge con-name br-vlan ifname br-vlan
+    ipv4.method disabled ipv6.method disabled
+    bridge.stp no bridge.forward-delay 0
+    connection.autoconnect yes
+  when: "'br-vlan' not in nm_connections.stdout"
+
+- name: Create br-vlan port
+  ansible.builtin.command: >
+    nmcli connection add type ethernet con-name br-vlan-port-{{ provider_interface }}
+    ifname {{ provider_interface }} master br-vlan connection.autoconnect yes
+  when: "'br-vlan-port-' not in nm_connections.stdout"
+
+- name: Activate bridges
+  ansible.builtin.command: "nmcli connection up {{ item }}"
+  loop:
+    - br-mgmt
+    - br-vxlan
+    - br-storage
+    - br-vlan
+  failed_when: false
+  changed_when: false
 
 - name: Verify all bridges exist
   ansible.builtin.command: "ip link show {{ item }}"

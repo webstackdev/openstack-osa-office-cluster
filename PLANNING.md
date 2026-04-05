@@ -461,3 +461,91 @@ This leaves OSA free to allocate container IPs from:
 - **Storage:** ~192.168.70.14 - 254
 
 Plenty of room for LXC containers (a typical single-infra-node deployment creates ~15 - 20 containers).
+
+---
+
+## Session Log — Deployment Progress (as of 2026-04-05)
+
+> Is it the case that you expected the ssh certs to be for the root user, and not for my user (kevin) - and that is the source of the problem?
+
+No, those are two separate issues:
+
+Host certificate principal mismatch — The "Certificate invalid: name is not a listed principal" error is about the server's identity, not the user. The host certs on your nodes were signed with hostname principals (e.g., mgmt.cloud-4core.local), but OSA connects by IP (192.168.50.168). The IP isn't in the cert's principal list, so SSH rejects the host. This would happen for any user connecting by IP. We worked around it with ansible_host_key_checking: false.
+
+User authentication — Separately, OSA defaults to connecting as root, which fails because root login is disabled. We fixed that with ansible_user: kevin and ansible_become: true. Then root's RSA key on this workstation wasn't in kevin's authorized_keys on the nodes (and the SSH client wasn't even trying the RSA key by default), so we distributed the key and set ansible_ssh_private_key_file.
+
+Your original playbooks (in this repo) already had ansible_user: kevin in group_vars/all.yml and connected by hostname — so they never hit either problem. The issues only appeared when OSA's own tooling took over with different defaults.
+
+> Why weren't we using domains like mgmt.cloud-4core.local and instead using the ip addresses?
+
+OSA's openstack_user_config.yml requires actual IP addresses in the ip: fields — it uses them for network math (allocating container IPs from cidr_networks, checking against used_ips, configuring bridges). The dynamic inventory then sets ansible_host from those IPs, which is why SSH connections go to 192.168.50.168 instead of mgmt.cloud-4core.local.
+
+We could work around the host cert issue more cleanly by adding ansible_host: mgmt.cloud-4core.local (etc.) as a host_vars override in the OSA config so SSH connects by hostname while OSA still has the IPs for networking. But ansible_host_key_checking: false is the simpler fix and fine for a learning cluster — the host certs are still validating the server identity, just not through SSH's strict checking path.
+
+### What was completed
+
+**Phase 0 — Prerequisites:** SSH verified to all 4 nodes. All 4 networks (mgmt, overlay, storage, provider) verified. Fixed cloud-4core overlay IP from `.12` to `.6` across all files.
+
+**Phase 1 — Prepare target hosts:** Succeeded after 4 retries. Fixes needed:
+- `ansible_kernel` can't be used in `group_vars` (facts not loaded at variable parse time) — moved to `ansible_facts['kernel']` in tasks
+- Ubuntu 24.04 uses `ntpsec`, not `chrony` — switched NTP config
+- Drives already had XFS — changed from ext4 to xfs to avoid needing `force: true`
+
+**Phase 2 — Prepare deployment host:** Succeeded immediately. OSA cloned to `/opt/openstack-ansible` (stable/2025.2), bootstrap ran.
+
+**Phase 3 — Deploy OSA config:** Succeeded. Deployed `openstack_user_config.yml`, `user_variables.yml`, `env.d/cinder.yml`, `conf.d/swift.yml`. Generated secrets. Syntax validation passed.
+
+**Phase 4 — OSA deployment:**
+- Stage 1 (`setup_hosts`): Reported success, but **was a no-op** — see below.
+- Stage 2 (`setup_infrastructure`): Reported success, but **was a no-op** — see below.
+- Stage 3 (`setup_openstack`): **NOT YET RUN.**
+
+### Critical discovery: Stages 1 & 2 were no-ops
+
+The `openstack_user_config.yml` was missing the required `global_overrides:` key. Without it, OSA's dynamic inventory can't parse the config properly — it generates groups but with **zero hosts** in container groups (galera, rabbitmq, etc.). The stages "succeeded" because there were no matching hosts, so nothing actually ran.
+
+**Evidence:** After stages 1 & 2, `lxc-ls --fancy` on cloud-4core returns empty — no containers were created. The dynamic inventory shows `galera_container: []`, `galera_all: []`, etc.
+
+### Fixes applied (template + deployed to `/etc/openstack_deploy/`)
+
+1. **`openstack_user_config.yml`** — Added `global_overrides:` section containing `internal_lb_vip_address`, `external_lb_vip_address`, `management_bridge: "br-mgmt"`, and all `provider_networks`. The VIPs are also kept at top level (both locations needed by OSA). Source template updated and re-deployed.
+
+2. **`user_variables.yml`** — Added SSH/privilege escalation settings because root login is disabled on all nodes:
+   ```yaml
+   ansible_user: kevin
+   ansible_become: true
+   ansible_ssh_private_key_file: /root/.ssh/id_rsa
+   ansible_host_key_checking: false
+   ```
+   Root's RSA public key was distributed to kevin's `~/.ssh/authorized_keys` on all 4 nodes. Host key checking disabled because the SSH host certificates have principals set to hostnames (e.g., `mgmt.cloud-4core.local`) but OSA connects by IP.
+
+### What needs to happen next (resume here)
+
+**All three OSA stages need to be re-run from scratch** since stages 1 & 2 were no-ops:
+
+```bash
+cd /opt/openstack-ansible/playbooks
+
+# Stage 1 — creates LXC containers, configures networking inside them
+sudo openstack-ansible openstack.osa.setup_hosts 2>&1 | tee /tmp/phase4-stage1-redo.log
+
+# Stage 2 — deploys galera, rabbitmq, memcached, repo server
+sudo openstack-ansible openstack.osa.setup_infrastructure 2>&1 | tee /tmp/phase4-stage2-redo.log
+
+# Verify galera
+source /usr/local/bin/openstack-ansible.rc
+ansible galera_container -m shell -a "mariadb -e 'SHOW STATUS LIKE \"wsrep_cluster_size\";'"
+
+# Stage 3 — deploys all OpenStack services
+sudo openstack-ansible openstack.osa.setup_openstack 2>&1 | tee /tmp/phase4-stage3.log
+```
+
+Then Phase 5 — verification (create provider network, launch test instance, etc.).
+
+### Known environment notes
+
+- OSA version: 2025.2 (Flamingo), `stable/2025.2` branch, cloned at `/opt/openstack-ansible`
+- `openstack-ansible` wrapper script sources `/usr/local/bin/openstack-ansible.rc` which sets `ANSIBLE_INVENTORY` to the dynamic inventory — plain `ansible` commands from a non-OSA directory won't see container groups
+- The workstation is the deployment host (not cloud-4core) — OSA runs via `sudo` from here
+- Host certs have principals like `mgmt.cloud-4core.local` so always use hostnames for manual SSH: `ssh kevin@mgmt.cloud-4core.local`
+- Root's SSH key is RSA (`/root/.ssh/id_rsa`) — the default SSH client config on this system only tries ed25519, so the key file must be specified explicitly

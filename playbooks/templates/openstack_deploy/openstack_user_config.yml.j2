@@ -84,15 +84,15 @@ global_overrides:
 # ============================================================================
 
 # Infrastructure services (all on cloud-4core)
-shared_infra_hosts:
+shared-infra_hosts:
   cloud-4core:
     ip: 192.168.50.168
 
-repo_infra_hosts:
+repo-infra_hosts:
   cloud-4core:
     ip: 192.168.50.168
 
-os_infra_hosts:
+os-infra_hosts:
   cloud-4core:
     ip: 192.168.50.168
 
@@ -109,7 +109,7 @@ network_hosts:
     ip: 192.168.50.168
 
 # OVN northd runs on the infra/network host
-neutron_ovn_northd_hosts:
+network-northd_hosts:
   cloud-4core:
     ip: 192.168.50.168
 
@@ -123,7 +123,7 @@ compute_hosts:
     ip: 192.168.50.234
 
 # OVN gateway hosts (DVR - all compute nodes are gateways)
-neutron_ovn_gateway_hosts:
+network-gateway_hosts:
   cloud-6core:
     ip: 192.168.50.171
   cloud-celeron:
@@ -132,7 +132,7 @@ neutron_ovn_gateway_hosts:
     ip: 192.168.50.234
 
 # Block storage API on cloud-4core, volume service on cloud-eugene
-storage_infra_hosts:
+storage-infra_hosts:
   cloud-4core:
     ip: 192.168.50.168
 
