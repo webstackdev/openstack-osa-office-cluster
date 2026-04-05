@@ -1,0 +1,17 @@
+---
+# Swift ring configuration for cloud-eugene
+# Deployed to /etc/openstack_deploy/conf.d/swift.yml
+
+swift-proxy_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+swift_hosts:
+  cloud-eugene:
+    ip: 192.168.50.234
+    container_vars:
+      swift_vars:
+        zone: 0
+        drives:
+          - name: sdc
+          - name: sdd

@@ -1,0 +1,7 @@
+---
+# Override cinder_volumes_container to run on metal (not in LXC)
+# Required for LVM direct access on cloud-eugene
+container_skel:
+  cinder_volumes_container:
+    properties:
+      is_metal: true

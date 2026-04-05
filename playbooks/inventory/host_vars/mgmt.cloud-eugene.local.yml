@@ -1,2 +1,32 @@
 ---
 server_name: cloud-eugene.local
+short_hostname: cloud-eugene
+
+# Network interfaces
+mgmt_interface: enp13s0
+mgmt_ip: 192.168.50.234
+overlay_interface: enp8s0
+overlay_ip: 192.168.60.13
+storage_interface: enp7s0
+storage_ip: 192.168.70.13
+provider_interface: enp12s0
+
+# Default gateway (management network router)
+mgmt_gateway: 192.168.50.1
+
+# Node roles
+is_controller: false
+is_compute: true
+
+# Storage - Nova ephemeral
+ephemeral_device: /dev/sda
+ephemeral_mount: /var/lib/nova/instances
+
+# Storage - Cinder LVM
+cinder_device: /dev/sde
+cinder_vg_name: cinder-volumes
+
+# Storage - Swift
+swift_devices:
+  - /dev/sdc
+  - /dev/sdd

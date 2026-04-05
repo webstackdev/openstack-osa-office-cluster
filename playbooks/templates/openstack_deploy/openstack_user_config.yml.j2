@@ -1,0 +1,154 @@
+---
+# OpenStack-Ansible User Configuration
+# Deployed to /etc/openstack_deploy/openstack_user_config.yml
+# See: https://docs.openstack.org/openstack-ansible/latest/reference/configuration/using-overrides.html
+
+cidr_networks:
+  management: 192.168.50.0/24
+  tunnel: 192.168.60.0/24
+  storage: 192.168.70.0/24
+
+used_ips:
+  # Management network (192.168.50.0/24)
+  - "192.168.50.1,192.168.50.50"
+  - "192.168.50.168"
+  - "192.168.50.171"
+  - "192.168.50.178"
+  - "192.168.50.210"
+  - "192.168.50.234"
+  # Overlay/Tunnel network (192.168.60.0/24)
+  - "192.168.60.1,192.168.60.9"
+  - "192.168.60.10"
+  - "192.168.60.11"
+  - "192.168.60.12"
+  - "192.168.60.13"
+  # Storage network (192.168.70.0/24)
+  - "192.168.70.1,192.168.70.9"
+  - "192.168.70.10"
+  - "192.168.70.11"
+  - "192.168.70.12"
+  - "192.168.70.13"
+
+internal_lb_vip_address: 192.168.50.168
+external_lb_vip_address: 192.168.50.168
+
+provider_networks:
+  - network:
+      container_bridge: "br-mgmt"
+      container_type: "veth"
+      container_interface: "eth1"
+      ip_from_q: "management"
+      type: "raw"
+      group_binds:
+        - all_containers
+        - hosts
+      is_management_address: true
+  - network:
+      container_bridge: "br-vxlan"
+      container_type: "veth"
+      container_interface: "eth10"
+      ip_from_q: "tunnel"
+      type: "geneve"
+      range: "1:1000"
+      net_name: "geneve"
+      group_binds:
+        - neutron_ovn_controller
+  - network:
+      container_bridge: "br-vlan"
+      container_type: "veth"
+      container_interface: "eth12"
+      host_bind_override: "eth12"
+      type: "flat"
+      net_name: "physnet1"
+      group_binds:
+        - neutron_ovn_controller
+  - network:
+      container_bridge: "br-storage"
+      container_type: "veth"
+      container_interface: "eth2"
+      ip_from_q: "storage"
+      type: "raw"
+      group_binds:
+        - glance_api
+        - cinder_api
+        - cinder_volume
+        - nova_compute
+        - swift_proxy
+
+# ============================================================================
+# Host assignments
+# ============================================================================
+
+# Infrastructure services (all on cloud-4core)
+shared_infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+repo_infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+os_infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+identity_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+dashboard_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+network_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# OVN northd runs on the infra/network host
+neutron_ovn_northd_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Compute hosts (OVN controller runs on each compute node)
+compute_hosts:
+  cloud-6core:
+    ip: 192.168.50.171
+  cloud-celeron:
+    ip: 192.168.50.178
+  cloud-eugene:
+    ip: 192.168.50.234
+
+# OVN gateway hosts (DVR - all compute nodes are gateways)
+neutron_ovn_gateway_hosts:
+  cloud-6core:
+    ip: 192.168.50.171
+  cloud-celeron:
+    ip: 192.168.50.178
+  cloud-eugene:
+    ip: 192.168.50.234
+
+# Block storage API on cloud-4core, volume service on cloud-eugene
+storage_infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+storage_hosts:
+  cloud-eugene:
+    ip: 192.168.50.234
+    container_vars:
+      cinder_backends:
+        lvm:
+          volume_group: cinder-volumes
+          volume_driver: cinder.volume.drivers.lvm.LVMVolumeDriver
+          volume_backend_name: LVM_iSCSI
+          iscsi_ip_address: 192.168.70.13
+
+# HAProxy (single node, no keepalived)
+haproxy_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Coordination service
+coordination_hosts:
+  cloud-4core:
+    ip: 192.168.50.168

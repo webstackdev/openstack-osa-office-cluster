@@ -1,0 +1,56 @@
+# OpenStack bridge configuration - managed by Ansible
+# Do not edit manually. Source config backed up to /etc/netplan/backup/
+network:
+  version: 2
+  renderer: networkd
+
+  ethernets:
+    {{ mgmt_interface }}:
+      dhcp4: false
+    {{ overlay_interface }}:
+      dhcp4: false
+    {{ storage_interface }}:
+      dhcp4: false
+    {{ provider_interface }}:
+      dhcp4: false
+
+  bridges:
+    br-mgmt:
+      interfaces:
+        - {{ mgmt_interface }}
+      addresses:
+        - {{ mgmt_ip }}/24
+      routes:
+        - to: default
+          via: {{ mgmt_gateway }}
+      nameservers:
+        addresses: {{ dns_servers | to_json }}
+      parameters:
+        stp: false
+        forward-delay: 0
+
+    br-vxlan:
+      interfaces:
+        - {{ overlay_interface }}
+      addresses:
+        - {{ overlay_ip }}/24
+      parameters:
+        stp: false
+        forward-delay: 0
+
+    br-storage:
+      interfaces:
+        - {{ storage_interface }}
+      addresses:
+        - {{ storage_ip }}/24
+      parameters:
+        stp: false
+        forward-delay: 0
+
+    br-vlan:
+      interfaces:
+        - {{ provider_interface }}
+      dhcp4: false
+      parameters:
+        stp: false
+        forward-delay: 0

@@ -1,8 +1,0 @@
-- name: Configure Vim with plugins
-  hosts: all
-  remote_user: kevin
-  become: true
-  vars_files:
-    - secrets.yml
-  roles:
-    - webstack_builders.vim.run

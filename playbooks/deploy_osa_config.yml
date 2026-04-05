@@ -1,0 +1,75 @@
+---
+# Phase 3: Deploy OSA configuration to /etc/openstack_deploy/
+#
+# Deploys the templated configuration files and generates secrets.
+# Must be run after Phase 2 (prepare_deployment_host.yml).
+#
+# Usage: ansible-playbook playbooks/deploy_osa_config.yml
+
+- name: Deploy OpenStack-Ansible configuration
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    osa_config_dir: /etc/openstack_deploy
+    osa_base_dir: /opt/openstack-ansible
+
+  tasks:
+    - name: Deploy openstack_user_config.yml
+      ansible.builtin.template:
+        src: templates/openstack_deploy/openstack_user_config.yml.j2
+        dest: "{{ osa_config_dir }}/openstack_user_config.yml"
+        mode: "0644"
+        backup: true
+
+    - name: Deploy user_variables.yml
+      ansible.builtin.template:
+        src: templates/openstack_deploy/user_variables.yml.j2
+        dest: "{{ osa_config_dir }}/user_variables.yml"
+        mode: "0644"
+        backup: true
+
+    - name: Ensure env.d directory exists
+      ansible.builtin.file:
+        path: "{{ osa_config_dir }}/env.d"
+        state: directory
+        mode: "0755"
+
+    - name: Deploy cinder env.d override (run on metal for LVM)
+      ansible.builtin.template:
+        src: templates/openstack_deploy/env.d/cinder.yml.j2
+        dest: "{{ osa_config_dir }}/env.d/cinder.yml"
+        mode: "0644"
+
+    - name: Ensure conf.d directory exists
+      ansible.builtin.file:
+        path: "{{ osa_config_dir }}/conf.d"
+        state: directory
+        mode: "0755"
+
+    - name: Deploy Swift ring configuration
+      ansible.builtin.template:
+        src: templates/openstack_deploy/conf.d/swift.yml.j2
+        dest: "{{ osa_config_dir }}/conf.d/swift.yml"
+        mode: "0644"
+
+    - name: Check if user_secrets.yml has been populated
+      ansible.builtin.shell: >
+        grep -c "^[a-z].*_password:$" {{ osa_config_dir }}/user_secrets.yml || true
+      register: empty_passwords
+      changed_when: false
+
+    - name: Generate secrets (user_secrets.yml)
+      ansible.builtin.command: >
+        python3 {{ osa_base_dir }}/scripts/pw-token-gen.py
+        --file {{ osa_config_dir }}/user_secrets.yml
+      when: empty_passwords.stdout | int > 0
+
+    - name: Validate OSA configuration syntax
+      ansible.builtin.command: >
+        openstack-ansible openstack.osa.setup_infrastructure --syntax-check
+      args:
+        chdir: "{{ osa_base_dir }}/playbooks"
+      changed_when: false

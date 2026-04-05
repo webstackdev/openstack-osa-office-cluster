@@ -2,6 +2,8 @@
   "ansible.python.interpreterPath": "/bin/python3",
   "cSpell.words": [
     "debootstrap",
-    "tcpdump"
+    "firewalld",
+    "tcpdump",
+    "wsrep"
   ]
 }

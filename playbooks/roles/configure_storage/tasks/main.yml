@@ -1,0 +1,78 @@
+---
+# Glance image store (cloud-4core only)
+- name: Create filesystem on Glance device
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ glance_device }}"
+  when: glance_device is defined
+
+- name: Create Glance mount point
+  ansible.builtin.file:
+    path: "{{ glance_mount }}"
+    state: directory
+    mode: "0755"
+  when: glance_device is defined
+
+- name: Mount Glance device
+  ansible.posix.mount:
+    path: "{{ glance_mount }}"
+    src: "{{ glance_device }}"
+    fstype: ext4
+    state: mounted
+    opts: defaults,noatime
+  when: glance_device is defined
+
+# Nova ephemeral storage (compute nodes)
+- name: Create filesystem on ephemeral device
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ ephemeral_device }}"
+  when: ephemeral_device is defined
+
+- name: Create Nova instances mount point
+  ansible.builtin.file:
+    path: "{{ ephemeral_mount }}"
+    state: directory
+    mode: "0755"
+  when: ephemeral_device is defined
+
+- name: Mount ephemeral device for Nova instances
+  ansible.posix.mount:
+    path: "{{ ephemeral_mount }}"
+    src: "{{ ephemeral_device }}"
+    fstype: ext4
+    state: mounted
+    opts: defaults,noatime
+  when: ephemeral_device is defined
+
+# Cinder LVM (cloud-eugene only)
+- name: Create Cinder LVM physical volume
+  community.general.lvg:
+    vg: "{{ cinder_vg_name }}"
+    pvs: "{{ cinder_device }}"
+  when: cinder_device is defined
+
+# Swift storage (cloud-eugene only)
+- name: Create filesystem on Swift devices
+  community.general.filesystem:
+    fstype: xfs
+    dev: "{{ item }}"
+  loop: "{{ swift_devices | default([]) }}"
+
+- name: Create Swift mount points
+  ansible.builtin.file:
+    path: "/srv/node/{{ item | basename }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ swift_devices | default([]) }}"
+
+- name: Mount Swift devices
+  ansible.posix.mount:
+    path: "/srv/node/{{ item | basename }}"
+    src: "{{ item }}"
+    fstype: xfs
+    state: mounted
+    opts: noatime,nodiratime,logbufs=8
+  loop: "{{ swift_devices | default([]) }}"

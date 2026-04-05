@@ -1,0 +1,62 @@
+---
+# OpenStack-Ansible User Variables (global overrides)
+# Deployed to /etc/openstack_deploy/user_variables.yml
+
+# ============================================================================
+# Installation method
+# ============================================================================
+install_method: source
+
+# ============================================================================
+# Neutron / OVN networking
+# ============================================================================
+neutron_plugin_type: ml2.ovn
+neutron_ml2_drivers_type: "geneve,flat"
+neutron_provider_networks:
+  network_types: "geneve,flat"
+  network_geneve_ranges: "1:1000"
+  network_flat_networks: "physnet1"
+
+# ============================================================================
+# HAProxy / SSL
+# ============================================================================
+# Self-signed certificates via OSA's built-in PKI
+haproxy_ssl: true
+haproxy_ssl_self_signed_regen: false
+
+# Single-node HAProxy — no keepalived
+haproxy_use_keepalived: false
+
+# ============================================================================
+# Glance (Image service)
+# ============================================================================
+# Local file storage on cloud-4core /dev/sda (mounted at /var/lib/glance/images)
+glance_default_store: file
+
+# ============================================================================
+# Nova (Compute)
+# ============================================================================
+# CPU overcommit — generous for a home lab
+nova_cpu_allocation_ratio: 4.0
+nova_ram_allocation_ratio: 1.5
+
+# ============================================================================
+# Cinder (Block Storage)
+# ============================================================================
+# LVM backend on cloud-eugene
+cinder_default_volume_type: lvm
+
+# ============================================================================
+# Swift (Object Storage)
+# ============================================================================
+# Swift storage policies
+swift_storage_policies:
+  - policy:
+      name: default
+      index: 0
+      default: yes
+
+# Swift ring power and replicas (single storage node = 1 replica)
+swift_part_power: 10
+swift_replicas: 1
+swift_min_part_hours: 1

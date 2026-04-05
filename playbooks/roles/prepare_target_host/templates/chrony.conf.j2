@@ -1,0 +1,11 @@
+# Chrony NTP configuration - managed by Ansible
+# See chrony.conf(5) for details
+
+{% for server in ntp_servers %}
+server {{ server }} iburst
+{% endfor %}
+
+driftfile /var/lib/chrony/chrony.drift
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony

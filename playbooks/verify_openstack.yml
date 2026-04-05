@@ -1,0 +1,111 @@
+---
+# Phase 5: Post-deployment verification
+#
+# Verifies the OpenStack deployment is functional by checking services
+# and creating test resources.
+#
+# Usage: ansible-playbook playbooks/verify_openstack.yml
+
+- name: Verify OpenStack deployment
+  hosts: mgmt.cloud-4core.local
+  become: true
+  gather_facts: false
+
+  vars:
+    utility_container: "{{ lookup('pipe', 'ssh kevin@192.168.50.168 lxc-ls --filter utility') }}"
+
+  tasks:
+    - name: Check OpenStack service list
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && openstack service list -f json"
+      register: service_list
+      changed_when: false
+
+    - name: Display registered services
+      ansible.builtin.debug:
+        var: service_list.stdout | from_json
+
+    - name: Check compute services
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && openstack compute service list -f json"
+      register: compute_services
+      changed_when: false
+
+    - name: Display compute services
+      ansible.builtin.debug:
+        var: compute_services.stdout | from_json
+
+    - name: Check network agents
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && openstack network agent list -f json"
+      register: network_agents
+      changed_when: false
+
+    - name: Display network agents
+      ansible.builtin.debug:
+        var: network_agents.stdout | from_json
+
+    - name: Create external provider network
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && \
+            openstack network show provider-net 2>/dev/null || \
+            openstack network create --external --provider-network-type flat \
+              --provider-physical-network physnet1 provider-net"
+      register: provider_net
+      changed_when: "'created' in provider_net.stdout | default('')"
+
+    - name: Create external provider subnet
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && \
+            openstack subnet show provider-subnet 2>/dev/null || \
+            openstack subnet create --network provider-net \
+              --subnet-range 192.168.2.0/24 \
+              --gateway 192.168.2.1 \
+              --allocation-pool start=192.168.2.100,end=192.168.2.200 \
+              --no-dhcp provider-subnet"
+      register: provider_subnet
+      changed_when: "'created' in provider_subnet.stdout | default('')"
+
+    - name: Download cirros test image
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && \
+            openstack image show cirros-test 2>/dev/null || \
+            (curl -sL http://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img \
+              -o /tmp/cirros.img && \
+            openstack image create --disk-format qcow2 --container-format bare \
+              --public --file /tmp/cirros.img cirros-test)"
+      register: cirros_image
+      changed_when: "'created' in cirros_image.stdout | default('')"
+
+    - name: Create test flavor
+      ansible.builtin.shell: |
+        lxc-attach -n $(lxc-ls --filter utility | head -1) -- \
+          bash -c "source /root/openrc && \
+            openstack flavor show m1.tiny 2>/dev/null || \
+            openstack flavor create --ram 512 --disk 1 --vcpus 1 m1.tiny"
+      register: test_flavor
+      changed_when: "'created' in test_flavor.stdout | default('')"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OpenStack Verification Complete
+          ========================================
+          - Services registered: {{ (service_list.stdout | from_json) | length }}
+          - Provider network: provider-net (192.168.2.0/24)
+          - Floating IP pool: 192.168.2.100 - 200
+          - Test image: cirros-test
+          - Test flavor: m1.tiny
+
+          Next steps:
+          1. Create a test self-service network and router
+          2. Launch a test instance
+          3. Assign a floating IP
+          4. Access Horizon at https://192.168.50.168

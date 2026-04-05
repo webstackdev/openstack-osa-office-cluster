@@ -1,2 +1,23 @@
 ---
 server_name: cloud-6core.local
+short_hostname: cloud-6core
+
+# Network interfaces
+mgmt_interface: enp16s0
+mgmt_ip: 192.168.50.171
+overlay_interface: enp11s0
+overlay_ip: 192.168.60.10
+storage_interface: enp7s0
+storage_ip: 192.168.70.10
+provider_interface: enp6s0
+
+# Default gateway (management network router)
+mgmt_gateway: 192.168.50.1
+
+# Node roles
+is_controller: false
+is_compute: true
+
+# Storage - Nova ephemeral
+ephemeral_device: /dev/sdb
+ephemeral_mount: /var/lib/nova/instances

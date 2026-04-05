@@ -1,0 +1,20 @@
+---
+# Phase 1: Prepare target hosts for OpenStack-Ansible deployment
+#
+# This playbook prepares all four cloud nodes with:
+# - Required packages, kernel modules, sysctl settings
+# - NTP configuration
+# - Network bridges (br-mgmt, br-vxlan, br-storage, br-vlan)
+# - Storage configuration (Glance, Cinder LVM, Swift, Nova ephemeral)
+#
+# Usage: ansible-playbook playbooks/prepare_target_hosts.yml
+
+- name: Prepare target hosts for OpenStack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - prepare_target_host
+    - configure_networking
+    - configure_storage

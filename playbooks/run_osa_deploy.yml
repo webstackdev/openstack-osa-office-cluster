@@ -1,0 +1,55 @@
+---
+# Phase 4: Run OSA deployment
+#
+# Runs the three main OSA playbooks in sequence.
+# This will take several hours. Each stage can be run independently
+# by commenting out the others if resuming after a failure.
+#
+# Usage: ansible-playbook playbooks/run_osa_deploy.yml
+#
+# To run individual stages manually:
+#   cd /opt/openstack-ansible/playbooks
+#   openstack-ansible openstack.osa.setup_hosts
+#   openstack-ansible openstack.osa.setup_infrastructure
+#   openstack-ansible openstack.osa.setup_openstack
+
+- name: Run OpenStack-Ansible deployment
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    osa_base_dir: /opt/openstack-ansible
+
+  tasks:
+    - name: "Stage 1/3: Setup hosts (LXC containers, host config)"
+      ansible.builtin.command: >
+        openstack-ansible openstack.osa.setup_hosts
+      args:
+        chdir: "{{ osa_base_dir }}/playbooks"
+
+    - name: "Stage 2/3: Setup infrastructure (galera, rabbitmq, memcached, repo)"
+      ansible.builtin.command: >
+        openstack-ansible openstack.osa.setup_infrastructure
+      args:
+        chdir: "{{ osa_base_dir }}/playbooks"
+
+    - name: Verify galera cluster health
+      ansible.builtin.command: >
+        ansible galera_container -m shell
+        -a "mariadb -h localhost -e 'show status like \"%wsrep_cluster_%\";'"
+      args:
+        chdir: "{{ osa_base_dir }}/playbooks"
+      register: galera_check
+      changed_when: false
+
+    - name: Display galera cluster status
+      ansible.builtin.debug:
+        var: galera_check.stdout_lines
+
+    - name: "Stage 3/3: Setup OpenStack (keystone, glance, cinder, nova, neutron, horizon, swift)"
+      ansible.builtin.command: >
+        openstack-ansible openstack.osa.setup_openstack
+      args:
+        chdir: "{{ osa_base_dir }}/playbooks"

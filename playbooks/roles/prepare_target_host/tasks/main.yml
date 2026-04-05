@@ -1,0 +1,82 @@
+---
+- name: Update apt cache and upgrade all packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    cache_valid_time: 3600
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name: "{{ openstack_host_packages }}"
+    state: present
+
+- name: Load kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ openstack_kernel_modules }}"
+
+- name: Persist kernel modules across reboots
+  ansible.builtin.lineinfile:
+    path: /etc/modules-load.d/openstack.conf
+    line: "{{ item }}"
+    create: true
+    mode: "0644"
+  loop: "{{ openstack_kernel_modules }}"
+
+- name: Configure sysctl for IP forwarding and bridge netfilter
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { key: net.ipv4.ip_forward, value: "1" }
+    - { key: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { key: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+
+- name: Set hostname to short name
+  ansible.builtin.hostname:
+    name: "{{ short_hostname }}"
+
+- name: Remove 127.0.1.1 entries from /etc/hosts (OSA requirement)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1'
+    state: absent
+
+- name: Ensure all cloud nodes are in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ item }}"
+    state: present
+  loop:
+    - "192.168.50.168 cloud-4core"
+    - "192.168.50.171 cloud-6core"
+    - "192.168.50.178 cloud-celeron"
+    - "192.168.50.234 cloud-eugene"
+
+- name: Configure chrony NTP
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    mode: "0644"
+  notify: Restart chrony
+
+- name: Enable and start chrony
+  ansible.builtin.systemd:
+    name: chrony
+    enabled: true
+    state: started
+
+- name: Check if reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: reboot_required
+
+- name: Reboot if required
+  ansible.builtin.reboot:
+    msg: "Rebooting after kernel upgrade / module changes"
+    reboot_timeout: 300
+  when: reboot_required.stat.exists

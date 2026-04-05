@@ -1,0 +1,16 @@
+---
+# Phase 2: Prepare the deployment host (this workstation)
+#
+# Clones OpenStack-Ansible, runs bootstrap, copies example configs.
+# Must be run with become (sudo) since OSA installs to /opt and /etc.
+#
+# Usage: ansible-playbook playbooks/prepare_deployment_host.yml
+
+- name: Prepare deployment host for OpenStack-Ansible
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  roles:
+    - prepare_deployment_host

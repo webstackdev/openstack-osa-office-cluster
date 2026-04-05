@@ -1,0 +1,35 @@
+# AI - IGNORE THIS FILE
+
+clear && systemctl list-units --type=service --all
+
+apache2
+barbican
+mysql
+netplan-ovs-cleanup
+neutron-ovn-metadata-agent
+neutron-server
+nova-api
+nova-conductor
+nova-novncproxy
+nova-scheduler
+opensearch-dashboards
+opensearch
+openvswitch-switch
+ovn-central
+ovn-controller
+ovn-host
+ovn-northd
+ovn-ovsdb-server-nb
+ovn-ovsdb-server-sb
+ovs-record-hostname
+ovs-vswitchd
+ovsdb-server
+postgresql
+prometheus
+rabbitmq-server
+snap.microceph.daemon
+webmin
+
+Lots of:
+
+onfailure@*.service.service

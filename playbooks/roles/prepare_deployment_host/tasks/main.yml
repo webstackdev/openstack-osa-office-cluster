@@ -1,0 +1,35 @@
+---
+- name: Install deployment host packages
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - git
+      - python3-dev
+      - python3-pip
+      - sudo
+    state: present
+    update_cache: true
+
+- name: Clone OpenStack-Ansible repository
+  ansible.builtin.git:
+    repo: https://opendev.org/openstack/openstack-ansible
+    dest: /opt/openstack-ansible
+    version: stable/2025.2
+    force: false
+  register: osa_clone
+
+- name: Run OSA bootstrap script
+  ansible.builtin.command: /opt/openstack-ansible/scripts/bootstrap-ansible.sh
+  args:
+    creates: /usr/local/bin/openstack-ansible
+  when: osa_clone.changed or not ansible_check_mode
+
+- name: Check if openstack_deploy directory exists
+  ansible.builtin.stat:
+    path: /etc/openstack_deploy
+  register: osa_deploy_dir
+
+- name: Copy OSA example configuration
+  ansible.builtin.command: >
+    cp -a /opt/openstack-ansible/etc/openstack_deploy /etc/openstack_deploy
+  when: not osa_deploy_dir.stat.exists
