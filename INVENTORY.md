@@ -25,7 +25,7 @@ Nova, Neutron, Keystone, Cinder, Swift
 
 - 192.168.60.10  overlay.cloud-6core.local
 - 192.168.60.11  overlay.cloud-celeron.local
-- 192.168.60.12  overlay.cloud-4core.local
+- 192.168.60.6   overlay.cloud-4core.local
 - 192.168.60.13  overlay.cloud-eugene.local
 
 4. Storage Network
@@ -65,7 +65,7 @@ sdd    119.2G   SSD disk (Root FS)
 
 | Device  | MAC Address       | IPv4 Address   | Network Type |
 | ------- | ----------------- | -------------- | ------------ |
-| enp6s0  | 00:e0:4c:68:07:3a | 192.168.60.12  | Overlay      |
+| enp6s0  | 00:e0:4c:68:07:3a | 192.168.60.6   | Overlay      |
 | enp7s0  | 00:e0:4c:68:07:3b |                | Provider     |
 | enp10s0 | 00:e0:4c:68:07:3c |                | **unused**   |
 | enp11s0 | 00:e0:4c:68:07:3d | 192.168.70.12  | Storage      |

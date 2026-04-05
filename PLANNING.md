@@ -139,7 +139,7 @@ The environment uses **Neutron Option 2 (Self-service networks)** with the ML2/O
 
 | Host | br-mgmt (iface) | br-vxlan (iface) | br-storage (iface) | br-vlan (iface) |
 |---|---|---|---|---|
-| cloud-4core | enp12s0 (192.168.50.168) | enp6s0 (192.168.60.12) | enp11s0 (192.168.70.12) | enp7s0 (no IP) |
+| cloud-4core | enp12s0 (192.168.50.168) | enp6s0 (192.168.60.6) | enp11s0 (192.168.70.12) | enp7s0 (no IP) |
 | cloud-6core | enp16s0 (192.168.50.171) | enp11s0 (192.168.60.10) | enp7s0 (192.168.70.10) | enp6s0 (no IP) |
 | cloud-celeron | enp12s0 (192.168.50.178) | enp6s0 (192.168.60.11) | enp11s0 (192.168.70.11) | enp7s0 (no IP) |
 | cloud-eugene | enp13s0 (192.168.50.234) | enp8s0 (192.168.60.13) | enp7s0 (192.168.70.13) | enp12s0 (no IP) |
@@ -442,7 +442,7 @@ used_ips:
   - "192.168.60.1,192.168.60.9"   # safety range
   - "192.168.60.10"           # cloud-6core
   - "192.168.60.11"           # cloud-celeron
-  - "192.168.60.12"           # cloud-4core
+  - "192.168.60.6"            # cloud-4core
   - "192.168.60.13"           # cloud-eugene
 
   # Storage network (192.168.70.0/24)

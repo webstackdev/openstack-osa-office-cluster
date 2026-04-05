@@ -6,7 +6,7 @@ short_hostname: cloud-4core
 mgmt_interface: enp12s0
 mgmt_ip: 192.168.50.168
 overlay_interface: enp6s0
-overlay_ip: 192.168.60.12
+overlay_ip: 192.168.60.6
 storage_interface: enp11s0
 storage_ip: 192.168.70.12
 provider_interface: enp7s0
