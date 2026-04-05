@@ -10,6 +10,11 @@
     name: "{{ openstack_host_packages }}"
     state: present
 
+- name: Install linux-modules-extra for running kernel
+  ansible.builtin.apt:
+    name: "linux-modules-extra-{{ ansible_facts['kernel'] }}"
+    state: present
+
 - name: Load kernel modules
   community.general.modprobe:
     name: "{{ item }}"
@@ -57,16 +62,16 @@
     - "192.168.50.178 cloud-celeron"
     - "192.168.50.234 cloud-eugene"
 
-- name: Configure chrony NTP
+- name: Configure ntpsec NTP
   ansible.builtin.template:
-    src: chrony.conf.j2
-    dest: /etc/chrony/chrony.conf
+    src: ntp.conf.j2
+    dest: /etc/ntpsec/ntp.conf
     mode: "0644"
-  notify: Restart chrony
+  notify: Restart ntpsec
 
-- name: Enable and start chrony
+- name: Enable and start ntpsec
   ansible.builtin.systemd:
-    name: chrony
+    name: ntpsec
     enabled: true
     state: started
 

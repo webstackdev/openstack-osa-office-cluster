@@ -32,48 +32,52 @@ used_ips:
 internal_lb_vip_address: 192.168.50.168
 external_lb_vip_address: 192.168.50.168
 
-provider_networks:
-  - network:
-      container_bridge: "br-mgmt"
-      container_type: "veth"
-      container_interface: "eth1"
-      ip_from_q: "management"
-      type: "raw"
-      group_binds:
-        - all_containers
-        - hosts
-      is_management_address: true
-  - network:
-      container_bridge: "br-vxlan"
-      container_type: "veth"
-      container_interface: "eth10"
-      ip_from_q: "tunnel"
-      type: "geneve"
-      range: "1:1000"
-      net_name: "geneve"
-      group_binds:
-        - neutron_ovn_controller
-  - network:
-      container_bridge: "br-vlan"
-      container_type: "veth"
-      container_interface: "eth12"
-      host_bind_override: "eth12"
-      type: "flat"
-      net_name: "physnet1"
-      group_binds:
-        - neutron_ovn_controller
-  - network:
-      container_bridge: "br-storage"
-      container_type: "veth"
-      container_interface: "eth2"
-      ip_from_q: "storage"
-      type: "raw"
-      group_binds:
-        - glance_api
-        - cinder_api
-        - cinder_volume
-        - nova_compute
-        - swift_proxy
+global_overrides:
+  internal_lb_vip_address: 192.168.50.168
+  external_lb_vip_address: 192.168.50.168
+  management_bridge: "br-mgmt"
+  provider_networks:
+    - network:
+        container_bridge: "br-mgmt"
+        container_type: "veth"
+        container_interface: "eth1"
+        ip_from_q: "management"
+        type: "raw"
+        group_binds:
+          - all_containers
+          - hosts
+        is_management_address: true
+    - network:
+        container_bridge: "br-vxlan"
+        container_type: "veth"
+        container_interface: "eth10"
+        ip_from_q: "tunnel"
+        type: "geneve"
+        range: "1:1000"
+        net_name: "geneve"
+        group_binds:
+          - neutron_ovn_controller
+    - network:
+        container_bridge: "br-vlan"
+        container_type: "veth"
+        container_interface: "eth12"
+        host_bind_override: "eth12"
+        type: "flat"
+        net_name: "physnet1"
+        group_binds:
+          - neutron_ovn_controller
+    - network:
+        container_bridge: "br-storage"
+        container_type: "veth"
+        container_interface: "eth2"
+        ip_from_q: "storage"
+        type: "raw"
+        group_binds:
+          - glance_api
+          - cinder_api
+          - cinder_volume
+          - nova_compute
+          - swift_proxy
 
 # ============================================================================
 # Host assignments

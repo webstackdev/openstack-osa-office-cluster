@@ -2,7 +2,7 @@
 # Glance image store (cloud-4core only)
 - name: Create filesystem on Glance device
   community.general.filesystem:
-    fstype: ext4
+    fstype: xfs
     dev: "{{ glance_device }}"
   when: glance_device is defined
 
@@ -17,7 +17,7 @@
   ansible.posix.mount:
     path: "{{ glance_mount }}"
     src: "{{ glance_device }}"
-    fstype: ext4
+    fstype: xfs
     state: mounted
     opts: defaults,noatime
   when: glance_device is defined
@@ -25,7 +25,7 @@
 # Nova ephemeral storage (compute nodes)
 - name: Create filesystem on ephemeral device
   community.general.filesystem:
-    fstype: ext4
+    fstype: xfs
     dev: "{{ ephemeral_device }}"
   when: ephemeral_device is defined
 
@@ -40,7 +40,7 @@
   ansible.posix.mount:
     path: "{{ ephemeral_mount }}"
     src: "{{ ephemeral_device }}"
-    fstype: ext4
+    fstype: xfs
     state: mounted
     opts: defaults,noatime
   when: ephemeral_device is defined

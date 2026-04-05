@@ -1,0 +1,13 @@
+# ntpsec NTP configuration - managed by Ansible
+# See ntp.conf(5) for details
+
+driftfile /var/lib/ntpsec/ntp.drift
+leapfile /usr/share/zoneinfo/leap-seconds.list
+
+{% for server in ntp_servers %}
+server {{ server }} iburst
+{% endfor %}
+
+restrict default kod nomodify nopeer noquery limited
+restrict 127.0.0.1
+restrict ::1

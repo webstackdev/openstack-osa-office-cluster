@@ -1,5 +1,5 @@
 ---
-- name: Restart chrony
+- name: Restart ntpsec
   ansible.builtin.systemd:
-    name: chrony
+    name: ntpsec
     state: restarted

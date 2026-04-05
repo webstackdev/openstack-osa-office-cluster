@@ -27,9 +27,7 @@ openstack_host_packages:
   - vlan
   - python3
   - python3-dev
-  - chrony
   - lvm2
-  - linux-modules-extra-{{ ansible_kernel }}
   - ntp
   - ntpdate
   - build-essential
