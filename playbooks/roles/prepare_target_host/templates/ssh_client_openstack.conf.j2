@@ -1,0 +1,12 @@
+# Ansible managed — do not edit
+# OSA connects to nodes by IP address, but SSH host certificates have hostname
+# principals (e.g. mgmt.cloud-4core.local). When the system-wide known_hosts
+# has a @cert-authority entry, SSH validates the cert principal against the
+# target, which fails for IP connections. Excluding cert-based host key
+# algorithms for internal networks makes SSH fall back to plain host keys,
+# avoiding the principal mismatch.
+
+Host 192.168.50.* 192.168.60.* 192.168.70.*
+    HostkeyAlgorithms ssh-ed25519,ssh-rsa,ecdsa-sha2-nistp256
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null

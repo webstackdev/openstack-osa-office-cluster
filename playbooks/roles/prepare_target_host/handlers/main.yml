@@ -1,4 +1,18 @@
 ---
+- name: Reassemble trusted_ca
+  ansible.builtin.assemble:
+    src: /etc/ssh/trusted_ca.d/
+    dest: /etc/ssh/trusted_ca
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sshd
+
+- name: Reload sshd
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded
+
 - name: Restart ntpsec
   ansible.builtin.systemd:
     name: ntpsec

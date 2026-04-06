@@ -32,6 +32,9 @@ openstack_service_publicuri_proto: https
 openstack_service_internaluri_proto: https
 openstack_service_adminuri_proto: https
 
+# The internal repo server (port 8181) is plain HTTP — not behind HAProxy SSL
+openstack_repo_protocol: http
+
 # ============================================================================
 # Glance (Image service)
 # ============================================================================
@@ -54,17 +57,26 @@ cinder_default_volume_type: lvm
 # ============================================================================
 # Swift (Object Storage)
 # ============================================================================
-# Swift storage policies
-swift_storage_policies:
-  - policy:
-      name: default
-      index: 0
-      default: yes
+# The os_swift role reads from the `swift` dict — NOT individual swift_* vars.
+swift:
+  part_power: 10
+  repl_number: 1
+  min_part_hours: 1
+  storage_network: "br-storage"
+  replication_network: "br-storage"
+  drives:
+    - name: sdc
+    - name: sdd
+  mount_point: /srv
+  storage_policies:
+    - policy:
+        name: default
+        index: 0
+        repl_number: 1
+        default: true
 
-# Swift ring power and replicas (single storage node = 1 replica)
-swift_part_power: 10
-swift_replicas: 1
-swift_min_part_hours: 1
+# Override the default replication number (3) for account/container rings
+swift_default_replication_number: 1
 
 # ============================================================================
 # LXC container image

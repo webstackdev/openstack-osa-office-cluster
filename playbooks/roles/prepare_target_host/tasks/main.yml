@@ -62,6 +62,47 @@
     - "192.168.50.178 cloud-celeron"
     - "192.168.50.234 cloud-eugene"
 
+- name: Configure SSH client to skip cert verification for internal IPs
+  ansible.builtin.template:
+    src: ssh_client_openstack.conf.j2
+    dest: /etc/ssh/ssh_config.d/99-openstack-internal.conf
+    mode: "0644"
+
+- name: Ensure SSH trusted CA directory exists
+  ansible.builtin.file:
+    path: /etc/ssh/trusted_ca.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install user CA into trusted_ca.d for OSA coexistence
+  ansible.builtin.copy:
+    src: /etc/ssh/user_ca.pub
+    dest: /etc/ssh/trusted_ca.d/user_ca
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reassemble trusted_ca
+
+- name: Ensure SSH authorized principals directory exists
+  ansible.builtin.file:
+    path: /etc/ssh/auth_principals
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create kevin SSH certificate principals file
+  ansible.builtin.copy:
+    content: "kevin\n"
+    dest: /etc/ssh/auth_principals/kevin_principals
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sshd
+
 - name: Configure ntpsec NTP
   ansible.builtin.template:
     src: ntp.conf.j2
