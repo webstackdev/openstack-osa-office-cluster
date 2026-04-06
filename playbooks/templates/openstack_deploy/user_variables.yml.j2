@@ -27,6 +27,11 @@ haproxy_ssl_self_signed_regen: false
 # Single-node HAProxy — no keepalived
 haproxy_use_keepalived: false
 
+# Tell all OpenStack services that endpoints are behind SSL
+openstack_service_publicuri_proto: https
+openstack_service_internaluri_proto: https
+openstack_service_adminuri_proto: https
+
 # ============================================================================
 # Glance (Image service)
 # ============================================================================
@@ -72,6 +77,13 @@ lxc_cache_prep_pre_commands: |
     ! -name 'uca.sources' \
     ! -name 'cloudarchive-*.list' \
     -delete
+
+# ============================================================================
+# RabbitMQ repos
+# ============================================================================
+# The default ppa1.rabbitmq.com domain is defunct; use the new deb1 mirrors.
+rabbitmq_repo_url: "https://deb1.rabbitmq.com/rabbitmq-server/ubuntu/noble"
+rabbitmq_erlang_repo_url: "https://deb1.rabbitmq.com/rabbitmq-erlang/ubuntu/noble"
 
 # ============================================================================
 # LXC container SSH key

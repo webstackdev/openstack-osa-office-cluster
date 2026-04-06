@@ -1,6 +1,6 @@
 # Home Cloud Planning
 
-I want to set up a home cloud, using Openstack Ansible, on bare metal (not in Docker containers).
+I want to set up a home cloud, using Openstack Ansible, on bare metal (not in Docker containers). Our goal is to create an effective infrastructure as code repo for the deployment of openstack to a home cloud cluster. These machines are also used as workstations in a computer lab, so have a desktop version of Ubuntu 24.04. It should be close to the default install. It's okay to change things directly via ssh if they involve a deviation from a default install - but if it's a change we would have to make to a default install of ubuntu 24.04, we should do so via ansible in the repo.
 
 This cluster is for learning and experimentation — getting experience with deploying apps on OpenStack and general familiarity with OpenStack. Load will never be significant.
 
@@ -549,3 +549,78 @@ Then Phase 5 — verification (create provider network, launch test instance, et
 - The workstation is the deployment host (not cloud-4core) — OSA runs via `sudo` from here
 - Host certs have principals like `mgmt.cloud-4core.local` so always use hostnames for manual SSH: `ssh kevin@mgmt.cloud-4core.local`
 - Root's SSH key is RSA (`/root/.ssh/id_rsa`) — the default SSH client config on this system only tries ed25519, so the key file must be specified explicitly
+
+---
+
+## Session Log — 2026-04-06 (Day 2)
+
+### What was completed
+
+**setup-hosts (Stage 1) — SUCCESS.** After resolving SSH/auth issues from the previous session, `setup_hosts` completed with `failed=0` across all 21 hosts (4 physical + 16 LXC containers + localhost). All 16 containers created on cloud-4core and networking configured.
+
+**setup-infrastructure (Stage 2) — PARTIALLY COMPLETE.** Three attempts were made. The last run got RabbitMQ, Galera, Memcached, and the repo server deployed, but the utility container failed on the final task. Details below.
+
+### Issues encountered and resolved
+
+**1. SSH `ansible_user` override (carryover from Day 1 fix)**
+The `openstack-ansible` wrapper loads `user_variables.yml` as `-e @` extra vars, which is highest Ansible precedence — overriding all group_vars. Containers were getting `ansible_user: kevin` + `ansible_become: true` instead of `ansible_user: root`. Fixed by:
+- Moving SSH settings out of `user_variables.yml` into group_vars:
+  - `/etc/openstack_deploy/group_vars/all.yml` — `ansible_user: kevin`, `ansible_become: true`, `ansible_ssh_private_key_file: /root/.ssh/id_rsa`
+  - `/etc/openstack_deploy/group_vars/all_containers.yml` — `ansible_user: root`, `ansible_become: false`
+- Deploying root's RSA public key to `/root/.ssh/authorized_keys` on all 4 physical nodes (needed for container delegation)
+- Updated `deploy_osa_config.yml` to manage these group_vars files and remove stale `physical_hosts.yml`
+
+**2. RabbitMQ repository domain defunct (`ppa1.rabbitmq.com`)**
+OSA's `rabbitmq_server` role hardcodes `ppa1.rabbitmq.com` (Cloudsmith) as the apt repo URL. That domain no longer resolves — RabbitMQ moved to `deb1.rabbitmq.com` / `deb2.rabbitmq.com`.
+
+Fix: Added overrides to `user_variables.yml.j2`:
+```yaml
+rabbitmq_repo_url: "https://deb1.rabbitmq.com/rabbitmq-server/ubuntu/noble"
+rabbitmq_erlang_repo_url: "https://deb1.rabbitmq.com/rabbitmq-erlang/ubuntu/noble"
+```
+
+**3. GPG key mismatch for new RabbitMQ repos**
+The role's apt `signed_by` references Cloudsmith keys (`C072C960` for RabbitMQ, `A16A4251` for Erlang), but the new `deb1` repos are signed with the official RabbitMQ key (`0A9AF211`, fingerprint `0A9AF2115F4687BD29803A206B73A36E6026DFCA`).
+
+Fix: Replaced the GPG key files on disk (**local-only patch, not in repo**):
+```
+/etc/ansible/roles/rabbitmq_server/files/gpg/C072C960  → replaced with 0A9AF211 key
+/etc/ansible/roles/rabbitmq_server/files/gpg/A16A4251  → replaced with 0A9AF211 key
+```
+
+### setup-infrastructure run history
+
+| Run | Log file | Outcome |
+|-----|----------|---------|
+| 1st | `setup-infra-20260406-045838.log` | RabbitMQ failed: `ppa1.rabbitmq.com` DNS resolution failure |
+| 2nd | `setup-infra-20260406-051913.log` | RabbitMQ failed: GPG key mismatch ("can't be done securely"); repo container systemctl issue |
+| 3rd | `setup-infra-20260406-053122.log` | RabbitMQ **succeeded** (28 changes). Utility container **failed**: couldn't reach repo server at `http://192.168.50.168:8181` (Connection refused) |
+
+### Remaining issue: repo server connectivity
+
+The repo container (`cloud-4core-repo-container-e2ee6d6e`) listens on its container IP `192.168.50.112:8181`, but other containers reference the host IP `192.168.50.168:8181`. HAProxy on cloud-4core should be proxying this, but port 8181 is returning "Connection refused" from the host IP.
+
+The utility container's final task ("Get list of repo packages") failed after 5 retries trying to fetch `http://192.168.50.168:8181/constraints/upper_constraints_cached.txt`.
+
+### What to do next session
+
+1. **Debug repo server proxy** — Check HAProxy config on cloud-4core for the 8181 backend. Verify the repo server process is running inside the repo container. A simple test: `ssh root@192.168.50.112 curl http://localhost:8181/constraints/upper_constraints_cached.txt` from the workstation.
+
+2. **Re-run setup-infrastructure** — It should be idempotent. Once the repo server is reachable at 192.168.50.168:8181, re-running should pick up where it left off (RabbitMQ/Galera/Memcached already done, utility container will retry).
+
+3. **Run setup-openstack (Stage 3)** — Once infrastructure is healthy.
+
+4. **Track local patches** — The GPG key files replaced in `/etc/ansible/roles/rabbitmq_server/files/gpg/` are local-only modifications to the OSA-installed role. They'll be lost if OSA is re-bootstrapped. Consider:
+   - Filing upstream issue / checking if newer OSA commits fix this
+   - Adding a post-bootstrap fixup script to the repo
+
+### Files changed in this session
+
+| File | Change |
+|------|--------|
+| `playbooks/templates/openstack_deploy/user_variables.yml.j2` | Added `rabbitmq_repo_url` and `rabbitmq_erlang_repo_url` overrides; removed SSH settings (moved to group_vars) |
+| `playbooks/deploy_osa_config.yml` | Added group_vars deployment (all.yml, all_containers.yml); removes stale physical_hosts.yml |
+| `/etc/openstack_deploy/group_vars/all.yml` (deployed) | `ansible_user: kevin`, become, SSH key |
+| `/etc/openstack_deploy/group_vars/all_containers.yml` (deployed) | `ansible_user: root`, no become |
+| `/etc/ansible/roles/rabbitmq_server/files/gpg/C072C960` (local patch) | Replaced Cloudsmith key with official RabbitMQ key |
+| `/etc/ansible/roles/rabbitmq_server/files/gpg/A16A4251` (local patch) | Replaced Cloudsmith key with official RabbitMQ key |
