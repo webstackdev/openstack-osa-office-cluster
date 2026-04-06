@@ -62,10 +62,23 @@ swift_replicas: 1
 swift_min_part_hours: 1
 
 # ============================================================================
-# SSH / Privilege escalation
+# LXC container image
 # ============================================================================
-# Root login is disabled on all nodes — connect as kevin, use sudo
-ansible_user: kevin
-ansible_become: true
-ansible_ssh_private_key_file: /root/.ssh/id_rsa
-ansible_host_key_checking: false
+# The host has third-party apt repos (Docker, etc.) that get copied into the
+# LXC image chroot. Remove them before apt-get update to avoid GPG key errors.
+lxc_cache_prep_pre_commands: |
+  find /etc/apt/sources.list.d/ -type f \
+    ! -name 'ubuntu.sources' \
+    ! -name 'uca.sources' \
+    ! -name 'cloudarchive-*.list' \
+    -delete
+
+# ============================================================================
+# LXC container SSH key
+# ============================================================================
+# OSA injects this public key into containers for root access
+lxc_container_ssh_key: /root/.ssh/id_rsa.pub
+
+# NOTE: ansible_user, ansible_become, and ansible_ssh_private_key_file are set
+# in group_vars/ (not here) because user_variables.yml is loaded as extra vars
+# (-e @) which would override group-level overrides for containers.

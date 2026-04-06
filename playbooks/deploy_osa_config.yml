@@ -49,6 +49,39 @@
         state: directory
         mode: "0755"
 
+    - name: Ensure group_vars directory exists
+      ansible.builtin.file:
+        path: "{{ osa_config_dir }}/group_vars"
+        state: directory
+        mode: "0755"
+
+    - name: Remove stale physical_hosts group_vars (group does not exist in OSA inventory)
+      ansible.builtin.file:
+        path: "{{ osa_config_dir }}/group_vars/physical_hosts.yml"
+        state: absent
+
+    - name: Deploy all group_vars (SSH defaults for all hosts)
+      ansible.builtin.copy:
+        dest: "{{ osa_config_dir }}/group_vars/all.yml"
+        mode: "0644"
+        content: |
+          ---
+          # Default: connect as kevin, escalate with sudo
+          ansible_user: kevin
+          ansible_become: true
+          ansible_ssh_private_key_file: /root/.ssh/id_rsa
+          ansible_host_key_checking: false
+
+    - name: Deploy all_containers group_vars (SSH as root)
+      ansible.builtin.copy:
+        dest: "{{ osa_config_dir }}/group_vars/all_containers.yml"
+        mode: "0644"
+        content: |
+          ---
+          # LXC containers: connect as root (OSA injects SSH keys)
+          ansible_user: root
+          ansible_become: false
+
     - name: Deploy Swift ring configuration
       ansible.builtin.template:
         src: templates/openstack_deploy/conf.d/swift.yml.j2
