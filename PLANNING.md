@@ -466,161 +466,148 @@ Plenty of room for LXC containers (a typical single-infra-node deployment create
 
 ## Session Log — Deployment Progress (as of 2026-04-05)
 
-> Is it the case that you expected the ssh certs to be for the root user, and not for my user (kevin) - and that is the source of the problem?
+ssh kevin@mgmt.cloud-4core.local "sudo lxc-attach -n cloud-4core-utility-container-a6b0d01e -- /bin/bash -c '
+> source /root/openrc
+>
+> echo \"=== Creating self-service network ===\"
+> openstack network create test-net 2>&1
+>
+> echo \"=== Creating subnet ===\"
+> openstack subnet create --network test-net --subnet-range 10.0.0.0/24 --dns-nameserver 8.8.8.8 test-subnet 2>&1
+>
+> echo \"=== Creating router ===\"
+> openstack router create test-router 2>&1
+>
+> echo \"=== Setting external gateway ===\"
+> openstack router set --external-gateway provider-net test-router 2>&1
+>
+> echo \"=== Adding subnet to router ===\"
+> openstack router add subnet test-router test-subnet 2>&1
+> '"
+=== Creating self-service network ===
++---------------------------+--------------------------------------+
+| Field                     | Value                                |
++---------------------------+--------------------------------------+
+| admin_state_up            | UP                                   |
+| availability_zone_hints   | nova                                 |
+| availability_zones        |                                      |
+| created_at                | 2026-04-06T23:43:48Z                 |
+| description               |                                      |
+| dns_domain                | None                                 |
+| id                        | 84565d80-d832-45af-bec5-c7c057b643b3 |
+| ipv4_address_scope        | None                                 |
+| ipv6_address_scope        | None                                 |
+| is_default                | False                                |
+| is_vlan_qinq              | None                                 |
+| is_vlan_transparent       | None                                 |
+| mtu                       | 1442                                 |
+| name                      | test-net                             |
+| port_security_enabled     | True                                 |
+| project_id                | c5a31a936e9c4da7b99d670a4d544b1b     |
+| provider:network_type     | geneve                               |
+| provider:physical_network | None                                 |
+| provider:segmentation_id  | 12                                   |
+| qinq                      | False                                |
+| qos_policy_id             | None                                 |
+| revision_number           | 1                                    |
+| router:external           | Internal                             |
+| segments                  | None                                 |
+| shared                    | False                                |
+| status                    | ACTIVE                               |
+| subnets                   |                                      |
+| tags                      |                                      |
+| updated_at                | 2026-04-06T23:43:48Z                 |
++---------------------------+--------------------------------------+
+=== Creating subnet ===
++----------------------+--------------------------------------+
+| Field                | Value                                |
++----------------------+--------------------------------------+
+| allocation_pools     | 10.0.0.2-10.0.0.254                  |
+| cidr                 | 10.0.0.0/24                          |
+| created_at           | 2026-04-06T23:43:53Z                 |
+| description          |                                      |
+| dns_nameservers      | 8.8.8.8                              |
+| dns_publish_fixed_ip | None                                 |
+| enable_dhcp          | True                                 |
+| gateway_ip           | 10.0.0.1                             |
+| host_routes          |                                      |
+| id                   | 97ff1b16-aa92-40cb-a7f7-d06496639045 |
+| ip_version           | 4                                    |
+| ipv6_address_mode    | None                                 |
+| ipv6_ra_mode         | None                                 |
+| name                 | test-subnet                          |
+| network_id           | 84565d80-d832-45af-bec5-c7c057b643b3 |
+| project_id           | c5a31a936e9c4da7b99d670a4d544b1b     |
+| revision_number      | 0                                    |
+| router:external      | False                                |
+| segment_id           | None                                 |
+| service_types        |                                      |
+| subnetpool_id        | None                                 |
+| tags                 |                                      |
+| updated_at           | 2026-04-06T23:43:53Z                 |
++----------------------+--------------------------------------+
+=== Creating router ===
++---------------------------+--------------------------------------+
+| Field                     | Value                                |
++---------------------------+--------------------------------------+
+| admin_state_up            | UP                                   |
+| availability_zone_hints   | nova                                 |
+| availability_zones        |                                      |
+| created_at                | 2026-04-06T23:43:58Z                 |
+| description               |                                      |
+| enable_default_route_bfd  | False                                |
+| enable_default_route_ecmp | False                                |
+| enable_ndp_proxy          | None                                 |
+| external_gateway_info     | null                                 |
+| external_gateways         | []                                   |
+| flavor_id                 | None                                 |
+| ha                        | True                                 |
+| id                        | c73686ad-87ec-4b8f-8a80-fb32adad450e |
+| name                      | test-router                          |
+| project_id                | c5a31a936e9c4da7b99d670a4d544b1b     |
+| revision_number           | 1                                    |
+| routes                    |                                      |
+| status                    | ACTIVE                               |
+| tags                      |                                      |
+| updated_at                | 2026-04-06T23:43:58Z                 |
++---------------------------+--------------------------------------+
+=== Setting external gateway ===
+=== Adding subnet to router ===
 
-No, those are two separate issues:
+# Download on cloud-4core host, then push into the container
+ssh kevin@mgmt.cloud-4core.local "curl -sL -o /tmp/cirros.img http://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img && ls -la /tmp/cirros.img && sudo cp /tmp/cirros.img /var/lib/lxc/cloud-4core-utility-container-a6b0d01e/rootfs/tmp/cirros.img"
 
-Host certificate principal mismatch — The "Certificate invalid: name is not a listed principal" error is about the server's identity, not the user. The host certs on your nodes were signed with hostname principals (e.g., mgmt.cloud-4core.local), but OSA connects by IP (192.168.50.168). The IP isn't in the cert's principal list, so SSH rejects the host. This would happen for any user connecting by IP. We worked around it with ansible_host_key_checking: false.
+ssh kevin@mgmt.cloud-4core.local "sudo lxc-attach -n cloud-4core-utility-container-a6b0d01e -- /bin/bash -c '
+source /root/openrc
+echo "=== Downloading cirros ==="
+curl -sL -o /tmp/cirros.img http://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img
+ls -la /tmp/cirros.img
+echo "=== Creating image ==="
+openstack image create --disk-format qcow2 --container-format bare --public --file /tmp/cirros.img cirros 2>&1
 
-User authentication — Separately, OSA defaults to connecting as root, which fails because root login is disabled. We fixed that with ansible_user: kevin and ansible_become: true. Then root's RSA key on this workstation wasn't in kevin's authorized_keys on the nodes (and the SSH client wasn't even trying the RSA key by default), so we distributed the key and set ansible_ssh_private_key_file.
+ssh kevin@mgmt.cloud-4core.local "sudo lxc-attach -n cloud-4core-utility-container-a6b0d01e -- /bin/bash -c '
+source /root/openrc
+echo "=== Launching test instance ==="
+openstack server create --flavor m1.tiny --image cirros --network test-net test-instance 2>&1
 
-Your original playbooks (in this repo) already had ansible_user: kevin in group_vars/all.yml and connected by hostname — so they never hit either problem. The issues only appeared when OSA's own tooling took over with different defaults.
-
-> Why weren't we using domains like mgmt.cloud-4core.local and instead using the ip addresses?
-
-OSA's openstack_user_config.yml requires actual IP addresses in the ip: fields — it uses them for network math (allocating container IPs from cidr_networks, checking against used_ips, configuring bridges). The dynamic inventory then sets ansible_host from those IPs, which is why SSH connections go to 192.168.50.168 instead of mgmt.cloud-4core.local.
-
-We could work around the host cert issue more cleanly by adding ansible_host: mgmt.cloud-4core.local (etc.) as a host_vars override in the OSA config so SSH connects by hostname while OSA still has the IPs for networking. But ansible_host_key_checking: false is the simpler fix and fine for a learning cluster — the host certs are still validating the server identity, just not through SSH's strict checking path.
-
-### What was completed
-
-**Phase 0 — Prerequisites:** SSH verified to all 4 nodes. All 4 networks (mgmt, overlay, storage, provider) verified. Fixed cloud-4core overlay IP from `.12` to `.6` across all files.
-
-**Phase 1 — Prepare target hosts:** Succeeded after 4 retries. Fixes needed:
-- `ansible_kernel` can't be used in `group_vars` (facts not loaded at variable parse time) — moved to `ansible_facts['kernel']` in tasks
-- Ubuntu 24.04 uses `ntpsec`, not `chrony` — switched NTP config
-- Drives already had XFS — changed from ext4 to xfs to avoid needing `force: true`
-
-**Phase 2 — Prepare deployment host:** Succeeded immediately. OSA cloned to `/opt/openstack-ansible` (stable/2025.2), bootstrap ran.
-
-**Phase 3 — Deploy OSA config:** Succeeded. Deployed `openstack_user_config.yml`, `user_variables.yml`, `env.d/cinder.yml`, `conf.d/swift.yml`. Generated secrets. Syntax validation passed.
-
-**Phase 4 — OSA deployment:**
-- Stage 1 (`setup_hosts`): Reported success, but **was a no-op** — see below.
-- Stage 2 (`setup_infrastructure`): Reported success, but **was a no-op** — see below.
-- Stage 3 (`setup_openstack`): **NOT YET RUN.**
-
-### Critical discovery: Stages 1 & 2 were no-ops
-
-The `openstack_user_config.yml` was missing the required `global_overrides:` key. Without it, OSA's dynamic inventory can't parse the config properly — it generates groups but with **zero hosts** in container groups (galera, rabbitmq, etc.). The stages "succeeded" because there were no matching hosts, so nothing actually ran.
-
-**Evidence:** After stages 1 & 2, `lxc-ls --fancy` on cloud-4core returns empty — no containers were created. The dynamic inventory shows `galera_container: []`, `galera_all: []`, etc.
-
-### Fixes applied (template + deployed to `/etc/openstack_deploy/`)
-
-1. **`openstack_user_config.yml`** — Added `global_overrides:` section containing `internal_lb_vip_address`, `external_lb_vip_address`, `management_bridge: "br-mgmt"`, and all `provider_networks`. The VIPs are also kept at top level (both locations needed by OSA). Source template updated and re-deployed.
-
-2. **`user_variables.yml`** — Added SSH/privilege escalation settings because root login is disabled on all nodes:
-   ```yaml
-   ansible_user: kevin
-   ansible_become: true
-   ansible_ssh_private_key_file: /root/.ssh/id_rsa
-   ansible_host_key_checking: false
-   ```
-   Root's RSA public key was distributed to kevin's `~/.ssh/authorized_keys` on all 4 nodes. Host key checking disabled because the SSH host certificates have principals set to hostnames (e.g., `mgmt.cloud-4core.local`) but OSA connects by IP.
-
-### What needs to happen next (resume here)
-
-**All three OSA stages need to be re-run from scratch** since stages 1 & 2 were no-ops:
-
-```bash
-cd /opt/openstack-ansible/playbooks
-
-# Stage 1 — creates LXC containers, configures networking inside them
-sudo openstack-ansible openstack.osa.setup_hosts 2>&1 | tee /tmp/phase4-stage1-redo.log
-
-# Stage 2 — deploys galera, rabbitmq, memcached, repo server
-sudo openstack-ansible openstack.osa.setup_infrastructure 2>&1 | tee /tmp/phase4-stage2-redo.log
-
-# Verify galera
-source /usr/local/bin/openstack-ansible.rc
-ansible galera_container -m shell -a "mariadb -e 'SHOW STATUS LIKE \"wsrep_cluster_size\";'"
-
-# Stage 3 — deploys all OpenStack services
-sudo openstack-ansible openstack.osa.setup_openstack 2>&1 | tee /tmp/phase4-stage3.log
-```
-
-Then Phase 5 — verification (create provider network, launch test instance, etc.).
-
-### Known environment notes
-
-- OSA version: 2025.2 (Flamingo), `stable/2025.2` branch, cloned at `/opt/openstack-ansible`
-- `openstack-ansible` wrapper script sources `/usr/local/bin/openstack-ansible.rc` which sets `ANSIBLE_INVENTORY` to the dynamic inventory — plain `ansible` commands from a non-OSA directory won't see container groups
-- The workstation is the deployment host (not cloud-4core) — OSA runs via `sudo` from here
-- Host certs have principals like `mgmt.cloud-4core.local` so always use hostnames for manual SSH: `ssh kevin@mgmt.cloud-4core.local`
-- Root's SSH key is RSA (`/root/.ssh/id_rsa`) — the default SSH client config on this system only tries ed25519, so the key file must be specified explicitly
-
----
-
-## Session Log — 2026-04-06 (Day 2)
-
-### What was completed
-
-**setup-hosts (Stage 1) — SUCCESS.** After resolving SSH/auth issues from the previous session, `setup_hosts` completed with `failed=0` across all 21 hosts (4 physical + 16 LXC containers + localhost). All 16 containers created on cloud-4core and networking configured.
-
-**setup-infrastructure (Stage 2) — PARTIALLY COMPLETE.** Three attempts were made. The last run got RabbitMQ, Galera, Memcached, and the repo server deployed, but the utility container failed on the final task. Details below.
-
-### Issues encountered and resolved
-
-**1. SSH `ansible_user` override (carryover from Day 1 fix)**
-The `openstack-ansible` wrapper loads `user_variables.yml` as `-e @` extra vars, which is highest Ansible precedence — overriding all group_vars. Containers were getting `ansible_user: kevin` + `ansible_become: true` instead of `ansible_user: root`. Fixed by:
-- Moving SSH settings out of `user_variables.yml` into group_vars:
-  - `/etc/openstack_deploy/group_vars/all.yml` — `ansible_user: kevin`, `ansible_become: true`, `ansible_ssh_private_key_file: /root/.ssh/id_rsa`
-  - `/etc/openstack_deploy/group_vars/all_containers.yml` — `ansible_user: root`, `ansible_become: false`
-- Deploying root's RSA public key to `/root/.ssh/authorized_keys` on all 4 physical nodes (needed for container delegation)
-- Updated `deploy_osa_config.yml` to manage these group_vars files and remove stale `physical_hosts.yml`
-
-**2. RabbitMQ repository domain defunct (`ppa1.rabbitmq.com`)**
-OSA's `rabbitmq_server` role hardcodes `ppa1.rabbitmq.com` (Cloudsmith) as the apt repo URL. That domain no longer resolves — RabbitMQ moved to `deb1.rabbitmq.com` / `deb2.rabbitmq.com`.
-
-Fix: Added overrides to `user_variables.yml.j2`:
-```yaml
-rabbitmq_repo_url: "https://deb1.rabbitmq.com/rabbitmq-server/ubuntu/noble"
-rabbitmq_erlang_repo_url: "https://deb1.rabbitmq.com/rabbitmq-erlang/ubuntu/noble"
-```
-
-**3. GPG key mismatch for new RabbitMQ repos**
-The role's apt `signed_by` references Cloudsmith keys (`C072C960` for RabbitMQ, `A16A4251` for Erlang), but the new `deb1` repos are signed with the official RabbitMQ key (`0A9AF211`, fingerprint `0A9AF2115F4687BD29803A206B73A36E6026DFCA`).
-
-Fix: Replaced the GPG key files on disk (**local-only patch, not in repo**):
-```
-/etc/ansible/roles/rabbitmq_server/files/gpg/C072C960  → replaced with 0A9AF211 key
-/etc/ansible/roles/rabbitmq_server/files/gpg/A16A4251  → replaced with 0A9AF211 key
-```
-
-### setup-infrastructure run history
-
-| Run | Log file | Outcome |
-|-----|----------|---------|
-| 1st | `setup-infra-20260406-045838.log` | RabbitMQ failed: `ppa1.rabbitmq.com` DNS resolution failure |
-| 2nd | `setup-infra-20260406-051913.log` | RabbitMQ failed: GPG key mismatch ("can't be done securely"); repo container systemctl issue |
-| 3rd | `setup-infra-20260406-053122.log` | RabbitMQ **succeeded** (28 changes). Utility container **failed**: couldn't reach repo server at `http://192.168.50.168:8181` (Connection refused) |
-
-### Remaining issue: repo server connectivity
-
-The repo container (`cloud-4core-repo-container-e2ee6d6e`) listens on its container IP `192.168.50.112:8181`, but other containers reference the host IP `192.168.50.168:8181`. HAProxy on cloud-4core should be proxying this, but port 8181 is returning "Connection refused" from the host IP.
-
-The utility container's final task ("Get list of repo packages") failed after 5 retries trying to fetch `http://192.168.50.168:8181/constraints/upper_constraints_cached.txt`.
-
-### What to do next session
-
-1. **Debug repo server proxy** — Check HAProxy config on cloud-4core for the 8181 backend. Verify the repo server process is running inside the repo container. A simple test: `ssh root@192.168.50.112 curl http://localhost:8181/constraints/upper_constraints_cached.txt` from the workstation.
-
-2. **Re-run setup-infrastructure** — It should be idempotent. Once the repo server is reachable at 192.168.50.168:8181, re-running should pick up where it left off (RabbitMQ/Galera/Memcached already done, utility container will retry).
-
-3. **Run setup-openstack (Stage 3)** — Once infrastructure is healthy.
-
-4. **Track local patches** — The GPG key files replaced in `/etc/ansible/roles/rabbitmq_server/files/gpg/` are local-only modifications to the OSA-installed role. They'll be lost if OSA is re-bootstrapped. Consider:
-   - Filing upstream issue / checking if newer OSA commits fix this
-   - Adding a post-bootstrap fixup script to the repo
-
-### Files changed in this session
-
-| File | Change |
-|------|--------|
-| `playbooks/templates/openstack_deploy/user_variables.yml.j2` | Added `rabbitmq_repo_url` and `rabbitmq_erlang_repo_url` overrides; removed SSH settings (moved to group_vars) |
-| `playbooks/deploy_osa_config.yml` | Added group_vars deployment (all.yml, all_containers.yml); removes stale physical_hosts.yml |
-| `/etc/openstack_deploy/group_vars/all.yml` (deployed) | `ansible_user: kevin`, become, SSH key |
-| `/etc/openstack_deploy/group_vars/all_containers.yml` (deployed) | `ansible_user: root`, no become |
-| `/etc/ansible/roles/rabbitmq_server/files/gpg/C072C960` (local patch) | Replaced Cloudsmith key with official RabbitMQ key |
-| `/etc/ansible/roles/rabbitmq_server/files/gpg/A16A4251` (local patch) | Replaced Cloudsmith key with official RabbitMQ key |
+(base) kevin@workstation:~/Repos/home-cloud$  ssh kevin@mgmt.cloud-4core.local "sudo lxc-attach -n cloud-4core-utility-container-a6b0d01e -- /bin/bash -c '
+> source /root/openrc
+> echo \"=== Creating floating IP ===\"
+> openstack floating ip create provider-net -f value -c floating_ip_address 2>&1
+> '"
+=== Creating floating IP ===
+192.168.2.174
+(base) kevin@workstation:~/Repos/home-cloud$  ssh kevin@mgmt.cloud-4core.local "sudo lxc-attach -n cloud-4core-utility-container-a6b0d01e -- /bin/bash -c '
+> source /root/openrc
+> echo \"=== Assigning floating IP ===\"
+> openstack server add floating ip test-instance 192.168.2.174 2>&1
+> echo \"=== Server status ===\"
+> openstack server list 2>&1
+> '"
+=== Assigning floating IP ===
+=== Server status ===
++--------------------------------------+---------------+--------+------------------------------------+--------+---------+
+| ID                                   | Name          | Status | Networks                           | Image  | Flavor  |
++--------------------------------------+---------------+--------+------------------------------------+--------+---------+
+| 10714d80-c4a5-44b6-b19d-116d2f0ab0d4 | test-instance | ACTIVE | test-net=10.0.0.155, 192.168.2.174 | cirros | m1.tiny |
++--------------------------------------+---------------+--------+------------------------------------+--------+---------+

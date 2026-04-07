@@ -62,6 +62,22 @@
     - "192.168.50.178 cloud-celeron"
     - "192.168.50.234 cloud-eugene"
 
+- name: Ensure OVS br-int supports OpenFlow15 for OVN compatibility
+  ansible.builtin.command:
+    cmd: ovs-vsctl set Bridge br-int protocols=OpenFlow10,OpenFlow13,OpenFlow14,OpenFlow15
+  register: ovs_of15_result
+  changed_when: ovs_of15_result.rc == 0
+  failed_when: false
+  when: "'compute' in group_names"
+
+- name: Set OVN bridge mappings for provider network
+  ansible.builtin.command:
+    cmd: ovs-vsctl set Open_vSwitch . external_ids:ovn-bridge-mappings=physnet1:br-provider
+  register: ovs_bridge_map_result
+  changed_when: ovs_bridge_map_result.rc == 0
+  failed_when: false
+  when: "'compute' in group_names"
+
 - name: Configure SSH client to skip cert verification for internal IPs
   ansible.builtin.template:
     src: ssh_client_openstack.conf.j2
