@@ -29,17 +29,17 @@
   ansible.builtin.lineinfile:
     path: /etc/grafana/grafana.ini
     regexp: '^;?http_addr\s*='
-    line: "http_addr = {{ grafana_listen_address }}"
+    line: "http_addr = {{ deploy_monitoring_grafana_listen_address }}"
     insertafter: '^\[server\]'
-  notify: restart grafana
+  notify: Restart grafana
 
 - name: Configure Grafana listen port
   ansible.builtin.lineinfile:
     path: /etc/grafana/grafana.ini
     regexp: '^;?http_port\s*='
-    line: "http_port = {{ grafana_http_port }}"
+    line: "http_port = {{ deploy_monitoring_grafana_http_port }}"
     insertafter: '^\[server\]'
-  notify: restart grafana
+  notify: Restart grafana
 
 - name: Create Grafana provisioning datasources directory
   ansible.builtin.file:
@@ -56,7 +56,7 @@
     owner: grafana
     group: grafana
     mode: "0640"
-  notify: restart grafana
+  notify: Restart grafana
 
 - name: Enable and start Grafana
   ansible.builtin.systemd:

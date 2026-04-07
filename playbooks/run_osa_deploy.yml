@@ -28,12 +28,14 @@
         openstack-ansible openstack.osa.setup_hosts
       args:
         chdir: "{{ osa_base_dir }}/playbooks"
+      changed_when: true
 
     - name: "Stage 2/3: Setup infrastructure (galera, rabbitmq, memcached, repo)"
       ansible.builtin.command: >
         openstack-ansible openstack.osa.setup_infrastructure
       args:
         chdir: "{{ osa_base_dir }}/playbooks"
+      changed_when: true
 
     - name: Verify galera cluster health
       ansible.builtin.command: >
@@ -53,3 +55,4 @@
         openstack-ansible openstack.osa.setup_openstack
       args:
         chdir: "{{ osa_base_dir }}/playbooks"
+      changed_when: true

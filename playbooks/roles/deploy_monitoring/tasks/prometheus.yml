@@ -2,43 +2,52 @@
 - name: Check if prometheus is already installed at target version
   ansible.builtin.stat:
     path: /usr/local/bin/prometheus
-  register: prometheus_bin
+  register: deploy_monitoring_prometheus_bin
 
 - name: Get installed prometheus version
   ansible.builtin.command: /usr/local/bin/prometheus --version
-  register: prometheus_installed_version
+  register: deploy_monitoring_prometheus_installed_version
   changed_when: false
   failed_when: false
-  when: prometheus_bin.stat.exists
+  when: deploy_monitoring_prometheus_bin.stat.exists
 
 - name: Download prometheus
   ansible.builtin.get_url:
-    url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-{{ monitoring_arch }}.tar.gz"
-    dest: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    url: >-
+      {{
+        "https://github.com/prometheus/prometheus/releases/download/v"
+        ~ deploy_monitoring_prometheus_version
+        ~ "/prometheus-"
+        ~ deploy_monitoring_prometheus_version
+        ~ ".linux-"
+        ~ deploy_monitoring_arch
+        ~ ".tar.gz"
+      }}
+    dest: "/tmp/prometheus-{{ deploy_monitoring_prometheus_version }}.tar.gz"
     mode: "0644"
   when: >
-    not prometheus_bin.stat.exists or
-    prometheus_version not in (prometheus_installed_version.stdout | default(''))
+    not deploy_monitoring_prometheus_bin.stat.exists or
+    deploy_monitoring_prometheus_version not in (deploy_monitoring_prometheus_installed_version.stdout | default(''))
 
 - name: Extract prometheus
   ansible.builtin.unarchive:
-    src: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    src: "/tmp/prometheus-{{ deploy_monitoring_prometheus_version }}.tar.gz"
     dest: /tmp
     remote_src: true
   when: >
-    not prometheus_bin.stat.exists or
-    prometheus_version not in (prometheus_installed_version.stdout | default(''))
+    not deploy_monitoring_prometheus_bin.stat.exists or
+    deploy_monitoring_prometheus_version not in (deploy_monitoring_prometheus_installed_version.stdout | default(''))
 
 - name: Install prometheus binaries
   ansible.builtin.copy:
-    src: "/tmp/prometheus-{{ prometheus_version }}.linux-{{ monitoring_arch }}/{{ item }}"
+    src: "/tmp/prometheus-{{ deploy_monitoring_prometheus_version }}.linux-{{ deploy_monitoring_arch }}/{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
     mode: "0755"
     remote_src: true
   loop:
     - prometheus
     - promtool
-  notify: restart prometheus
+  notify: Restart prometheus
 
 - name: Create prometheus system user
   ansible.builtin.user:
@@ -49,7 +58,7 @@
 
 - name: Create prometheus data directory
   ansible.builtin.file:
-    path: "{{ prometheus_data_dir }}"
+    path: "{{ deploy_monitoring_prometheus_data_dir }}"
     state: directory
     owner: prometheus
     group: prometheus
@@ -66,14 +75,14 @@
     src: prometheus.yml.j2
     dest: /etc/prometheus/prometheus.yml
     mode: "0644"
-  notify: restart prometheus
+  notify: Restart prometheus
 
 - name: Deploy prometheus systemd unit
   ansible.builtin.template:
     src: prometheus.service.j2
     dest: /etc/systemd/system/prometheus.service
     mode: "0644"
-  notify: restart prometheus
+  notify: Restart prometheus
 
 - name: Enable and start prometheus
   ansible.builtin.systemd:

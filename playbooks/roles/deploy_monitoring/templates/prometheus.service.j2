@@ -9,9 +9,9 @@ Group=prometheus
 Type=simple
 ExecStart=/usr/local/bin/prometheus \
   --config.file=/etc/prometheus/prometheus.yml \
-  --storage.tsdb.path={{ prometheus_data_dir }} \
-  --storage.tsdb.retention.time={{ prometheus_retention_period }} \
-  --web.listen-address={{ prometheus_listen_address }}:{{ prometheus_http_port }}
+  --storage.tsdb.path={{ deploy_monitoring_prometheus_data_dir }} \
+  --storage.tsdb.retention.time={{ deploy_monitoring_prometheus_retention_period }} \
+  --web.listen-address={{ deploy_monitoring_prometheus_listen_address }}:{{ deploy_monitoring_prometheus_http_port }}
 Restart=on-failure
 RestartSec=5
 

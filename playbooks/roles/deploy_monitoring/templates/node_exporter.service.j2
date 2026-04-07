@@ -8,7 +8,7 @@ User=node_exporter
 Group=node_exporter
 Type=simple
 ExecStart=/usr/local/bin/node_exporter \
-  --web.listen-address={{ node_exporter_listen_address }}:{{ node_exporter_port }}
+  --web.listen-address={{ deploy_monitoring_node_exporter_listen_address }}:{{ deploy_monitoring_node_exporter_port }}
 Restart=on-failure
 RestartSec=5
 

@@ -2,23 +2,24 @@
 - name: Check if promtail is already installed at target version
   ansible.builtin.stat:
     path: /usr/local/bin/promtail
-  register: promtail_bin
+  register: deploy_monitoring_promtail_bin
 
 - name: Get installed promtail version
   ansible.builtin.command: /usr/local/bin/promtail --version
-  register: promtail_installed_version
+  register: deploy_monitoring_promtail_installed_version
   changed_when: false
   failed_when: false
-  when: promtail_bin.stat.exists
+  when: deploy_monitoring_promtail_bin.stat.exists
 
 - name: Download promtail
   ansible.builtin.get_url:
-    url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-{{ monitoring_arch }}.zip"
-    dest: "/tmp/promtail-{{ promtail_version }}.zip"
+    url: >-
+      https://github.com/grafana/loki/releases/download/v{{ deploy_monitoring_promtail_version }}/promtail-linux-{{ deploy_monitoring_arch }}.zip
+    dest: "/tmp/promtail-{{ deploy_monitoring_promtail_version }}.zip"
     mode: "0644"
   when: >
-    not promtail_bin.stat.exists or
-    promtail_version not in (promtail_installed_version.stdout | default(''))
+    not deploy_monitoring_promtail_bin.stat.exists or
+    deploy_monitoring_promtail_version not in (deploy_monitoring_promtail_installed_version.stdout | default(''))
 
 - name: Install unzip for promtail extraction
   ansible.builtin.apt:
@@ -27,20 +28,20 @@
 
 - name: Extract promtail
   ansible.builtin.unarchive:
-    src: "/tmp/promtail-{{ promtail_version }}.zip"
+    src: "/tmp/promtail-{{ deploy_monitoring_promtail_version }}.zip"
     dest: /tmp
     remote_src: true
   when: >
-    not promtail_bin.stat.exists or
-    promtail_version not in (promtail_installed_version.stdout | default(''))
+    not deploy_monitoring_promtail_bin.stat.exists or
+    deploy_monitoring_promtail_version not in (deploy_monitoring_promtail_installed_version.stdout | default(''))
 
 - name: Install promtail binary
   ansible.builtin.copy:
-    src: /tmp/promtail-linux-{{ monitoring_arch }}
+    src: /tmp/promtail-linux-{{ deploy_monitoring_arch }}
     dest: /usr/local/bin/promtail
     mode: "0755"
     remote_src: true
-  notify: restart promtail
+  notify: Restart promtail
 
 - name: Create promtail system user
   ansible.builtin.user:
@@ -70,14 +71,14 @@
     src: promtail.yml.j2
     dest: /etc/promtail/promtail.yml
     mode: "0644"
-  notify: restart promtail
+  notify: Restart promtail
 
 - name: Deploy promtail systemd unit
   ansible.builtin.template:
     src: promtail.service.j2
     dest: /etc/systemd/system/promtail.service
     mode: "0644"
-  notify: restart promtail
+  notify: Restart promtail
 
 - name: Enable and start promtail
   ansible.builtin.systemd:

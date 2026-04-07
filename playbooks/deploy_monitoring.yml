@@ -15,7 +15,7 @@
   post_tasks:
     - name: Verify node_exporter is responding
       ansible.builtin.uri:
-        url: "http://{{ mgmt_ip }}:{{ node_exporter_port }}/metrics"
+        url: "http://{{ mgmt_ip }}:{{ deploy_monitoring_node_exporter_port }}/metrics"
         return_content: false
         status_code: 200
       register: node_exporter_check
@@ -24,7 +24,7 @@
 
     - name: Verify Loki is ready
       ansible.builtin.uri:
-        url: "http://{{ loki_listen_address }}:{{ loki_http_port }}/ready"
+        url: "http://{{ deploy_monitoring_loki_listen_address }}:{{ deploy_monitoring_loki_http_port }}/ready"
         return_content: true
         status_code: 200
       register: loki_check
@@ -34,7 +34,7 @@
 
     - name: Verify Prometheus is responding
       ansible.builtin.uri:
-        url: "http://{{ prometheus_listen_address }}:{{ prometheus_http_port }}/-/healthy"
+        url: "http://{{ deploy_monitoring_prometheus_listen_address }}:{{ deploy_monitoring_prometheus_http_port }}/-/healthy"
         return_content: false
         status_code: 200
       register: prometheus_check
@@ -44,7 +44,7 @@
 
     - name: Verify Grafana is responding
       ansible.builtin.uri:
-        url: "http://{{ grafana_listen_address }}:{{ grafana_http_port }}/api/health"
+        url: "http://{{ deploy_monitoring_grafana_listen_address }}:{{ deploy_monitoring_grafana_http_port }}/api/health"
         return_content: false
         status_code: 200
       register: grafana_check
@@ -58,11 +58,11 @@
           ========================================
           Monitoring Stack Deployed
           ========================================
-          node_exporter: http://{{ mgmt_ip }}:{{ node_exporter_port }}/metrics
+          node_exporter: http://{{ mgmt_ip }}:{{ deploy_monitoring_node_exporter_port }}/metrics
           {% if is_controller | default(false) %}
-          Loki:          http://{{ loki_listen_address }}:{{ loki_http_port }}
-          Prometheus:    http://{{ prometheus_listen_address }}:{{ prometheus_http_port }}
-          Grafana:       http://{{ grafana_listen_address }}:{{ grafana_http_port }}
+          Loki:          http://{{ deploy_monitoring_loki_listen_address }}:{{ deploy_monitoring_loki_http_port }}
+          Prometheus:    http://{{ deploy_monitoring_prometheus_listen_address }}:{{ deploy_monitoring_prometheus_http_port }}
+          Grafana:       http://{{ deploy_monitoring_grafana_listen_address }}:{{ deploy_monitoring_grafana_http_port }}
 
           Grafana default login: admin / admin
           {% endif %}

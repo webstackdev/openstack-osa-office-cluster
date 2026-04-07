@@ -82,5 +82,6 @@
     path: "/srv/{{ item | basename }}"
     owner: swift
     group: swift
+    mode: "0755"
     state: directory
   loop: "{{ swift_devices | default([]) }}"

@@ -4,12 +4,12 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://{{ prometheus_listen_address }}:{{ prometheus_http_port }}
+    url: http://{{ deploy_monitoring_prometheus_listen_address }}:{{ deploy_monitoring_prometheus_http_port }}
     isDefault: true
     editable: false
 
   - name: Loki
     type: loki
     access: proxy
-    url: http://{{ loki_listen_address }}:{{ loki_http_port }}
+    url: http://{{ deploy_monitoring_loki_listen_address }}:{{ deploy_monitoring_loki_http_port }}
     editable: false

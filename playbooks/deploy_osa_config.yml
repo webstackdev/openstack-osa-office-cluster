@@ -99,6 +99,7 @@
         python3 {{ osa_base_dir }}/scripts/pw-token-gen.py
         --file {{ osa_config_dir }}/user_secrets.yml
       when: empty_passwords.stdout | int > 0
+      changed_when: true
 
     - name: Validate OSA configuration syntax
       ansible.builtin.command: >
