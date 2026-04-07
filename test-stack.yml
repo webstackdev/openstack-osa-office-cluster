@@ -1,0 +1,93 @@
+heat_template_version: 2021-04-16
+
+description: Test stack — creates a self-service network, router, and cirros instance with a floating IP.
+
+parameters:
+  external_network:
+    type: string
+    default: provider-net
+    description: Name of the external provider network
+  image:
+    type: string
+    default: cirros
+    description: Name of the image to use
+  flavor:
+    type: string
+    default: m1.tiny
+    description: Name of the flavor to use
+
+resources:
+  test_net:
+    type: OS::Neutron::Net
+    properties:
+      name: test-net
+
+  test_subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      name: test-subnet
+      network: { get_resource: test_net }
+      cidr: 10.0.0.0/24
+      dns_nameservers:
+        - 8.8.8.8
+
+  test_router:
+    type: OS::Neutron::Router
+    properties:
+      name: test-router
+      external_gateway_info:
+        network: { get_param: external_network }
+
+  router_interface:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router: { get_resource: test_router }
+      subnet: { get_resource: test_subnet }
+
+  security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: test-sg
+      rules:
+        - protocol: icmp
+          direction: ingress
+        - protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          direction: ingress
+
+  test_port:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_resource: test_net }
+      security_groups:
+        - { get_resource: security_group }
+    depends_on: router_interface
+
+  test_instance:
+    type: OS::Nova::Server
+    properties:
+      name: test-instance
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+      networks:
+        - port: { get_resource: test_port }
+
+  floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: external_network }
+
+  floating_ip_assoc:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: floating_ip }
+      port_id: { get_resource: test_port }
+
+outputs:
+  instance_ip:
+    description: Private IP of the test instance
+    value: { get_attr: [test_instance, first_address] }
+  floating_ip_address:
+    description: Floating IP assigned to the test instance
+    value: { get_attr: [floating_ip, floating_ip_address] }

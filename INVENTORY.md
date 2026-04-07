@@ -77,7 +77,7 @@ sdd    119.2G   SSD disk (Root FS)
 
 | Component | Make | Model | Spec |
 | --- | --- | --- | --- |
-| Motherboard | Gigabyte | X570 GAMING X |1 x PCIe x16, 1 x PCIe x4@16, 3 x PCIe x1 (3 free)<br />Wake-on-LAN, PXE|
+| Motherboard | Gigabyte | X570 GAMING X |1 x PCIe x16, 1 x PCIe x4@16, 3 x PCIe x1 (3 free)<br />Wake-on-LAN, PXE |
 | CPU | AMD | Ryzen 5 2600X | 6C / 12T 3.60GHz |
 | GPU | Gigabyte | GeForce GTX 1060 | 6GB |
 | RAM | --- | DDR4 2400 MHz | 32 GB |
@@ -112,7 +112,7 @@ sde        476.9G    SSD disk (Cinder)
 
 | Component | Make | Model | Spec |
 | --- | --- | --- | --- |
-| Motherboard | Gigabyte | H510M H V2 |1 x PCIe x16, 1 x PCIe x1 (0 free)<br />Wake-on-LAN, PXE|
+| Motherboard | Gigabyte | H510M H V2 |1 x PCIe x16, 1 x PCIe x1 (0 free)<br />Wake-on-LAN, PXE |
 | CPU | Intel | i5-10400F | 6C / 12T 2.90GHz |
 | GPU | AMD | Radeon RX 560 | 6GB |
 | RAM | --- | DDR4 2133 MHz | 32 GB |
@@ -140,7 +140,7 @@ sdb    931.5G   HDD disk (Ephemeral)
 
 | Component | Make | Model | Spec |
 | --- | --- | --- | --- |
-| Motherboard | ASUS | H81M-C |1 x PCIe x16, 2 x PCIe x1 (2 free)<br />Wake-on-LAN, PXE, PME Wake up|
+| Motherboard | ASUS | H81M-C |1 x PCIe x16, 2 x PCIe x1 (2 free)<br />Wake-on-LAN, PXE, PME Wake up |
 | CPU | Intel | Pentium G3250 | 2C / 2T 3.20GHz |
 | iGPU | Intel | Xeon E3-1200 | --- |
 | RAM | --- | DDR3 1400 MHz | 8 GB |

@@ -30,7 +30,7 @@
   loop: "{{ openstack_kernel_modules }}"
 
 - name: Configure sysctl for IP forwarding and bridge netfilter
-  ansible.builtin.sysctl:
+  ansible.posix.sysctl:
     name: "{{ item.key }}"
     value: "{{ item.value }}"
     sysctl_set: true
