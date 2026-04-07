@@ -61,18 +61,26 @@
 
 - name: Create Swift mount points
   ansible.builtin.file:
-    path: "/srv/node/{{ item | basename }}"
+    path: "/srv/{{ item | basename }}"
     state: directory
-    owner: root
-    group: root
+    owner: swift
+    group: swift
     mode: "0755"
   loop: "{{ swift_devices | default([]) }}"
 
 - name: Mount Swift devices
   ansible.posix.mount:
-    path: "/srv/node/{{ item | basename }}"
+    path: "/srv/{{ item | basename }}"
     src: "{{ item }}"
     fstype: xfs
     state: mounted
     opts: noatime,nodiratime,logbufs=8
+  loop: "{{ swift_devices | default([]) }}"
+
+- name: Set Swift mount ownership
+  ansible.builtin.file:
+    path: "/srv/{{ item | basename }}"
+    owner: swift
+    group: swift
+    state: directory
   loop: "{{ swift_devices | default([]) }}"
