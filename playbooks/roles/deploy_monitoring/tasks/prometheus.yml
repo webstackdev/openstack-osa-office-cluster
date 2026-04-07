@@ -17,11 +17,8 @@
       {{
         "https://github.com/prometheus/prometheus/releases/download/v"
         ~ deploy_monitoring_prometheus_version
-        ~ "/prometheus-"
-        ~ deploy_monitoring_prometheus_version
-        ~ ".linux-"
-        ~ deploy_monitoring_arch
-        ~ ".tar.gz"
+        ~ "/prometheus-" ~ deploy_monitoring_prometheus_version
+        ~ ".linux-" ~ deploy_monitoring_arch ~ ".tar.gz"
       }}
     dest: "/tmp/prometheus-{{ deploy_monitoring_prometheus_version }}.tar.gz"
     mode: "0644"

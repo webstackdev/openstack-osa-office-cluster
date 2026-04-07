@@ -6,5 +6,39 @@
     "ntpsec",
     "tcpdump",
     "wsrep"
-  ]
-}
+  {
+    "ansible.python.interpreterPath": "/bin/python3",
+    "cSpell.words": ["debootstrap", "firewalld", "ntpsec", "tcpdump", "wsrep"],
+    "yaml.schemaStore.enable": false,
+    "yaml.schemas": {
+      "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/playbook": [
+        "playbooks/*.yml",
+        "playbooks/*.yaml"
+      ],
+      "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks": [
+        "playbooks/roles/deploy_monitoring/tasks/grafana.yml",
+        "playbooks/roles/deploy_monitoring/tasks/loki.yml",
+        "playbooks/roles/deploy_monitoring/tasks/main.yml",
+        "playbooks/roles/deploy_monitoring/tasks/node_exporter.yml",
+        "playbooks/roles/deploy_monitoring/tasks/prometheus.yml",
+        "playbooks/roles/deploy_monitoring/tasks/promtail.yml",
+        "playbooks/roles/deploy_monitoring/handlers/main.yml",
+        "playbooks/roles/*/tasks/*.yml",
+        "playbooks/roles/*/tasks/*.yaml",
+        "playbooks/roles/*/handlers/*.yml",
+        "playbooks/roles/*/handlers/*.yaml"
+      ],
+      "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/vars.json": [
+        "playbooks/group_vars/**/*.yml",
+        "playbooks/group_vars/**/*.yaml",
+        "playbooks/inventory/group_vars/**/*.yml",
+        "playbooks/inventory/group_vars/**/*.yaml",
+        "playbooks/inventory/host_vars/**/*.yml",
+        "playbooks/inventory/host_vars/**/*.yaml",
+        "playbooks/roles/*/defaults/*.yml",
+        "playbooks/roles/*/defaults/*.yaml",
+        "playbooks/roles/*/vars/*.yml",
+        "playbooks/roles/*/vars/*.yaml"
+      ]
+    }
+  }

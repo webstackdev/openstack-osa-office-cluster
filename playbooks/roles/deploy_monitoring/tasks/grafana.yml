@@ -7,9 +7,18 @@
       - gpg
     state: present
 
-- name: Add Grafana GPG key
+- name: Download Grafana GPG key to deployment host
   ansible.builtin.get_url:
     url: https://apt.grafana.com/gpg.key
+    dest: /tmp/grafana.asc
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Copy Grafana GPG key to target
+  ansible.builtin.copy:
+    src: /tmp/grafana.asc
     dest: /etc/apt/keyrings/grafana.asc
     mode: "0644"
 
