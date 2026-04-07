@@ -1,0 +1,68 @@
+---
+# Phase 6: Deploy Observability Stack (Loki + Prometheus + Grafana)
+#
+# Deploys node_exporter and Promtail on all nodes.
+# Deploys Loki, Prometheus, and Grafana on the controller (cloud-4core).
+#
+# Usage: ansible-playbook playbooks/deploy_monitoring.yml
+
+- name: Deploy monitoring stack
+  hosts: all
+  become: true
+  roles:
+    - deploy_monitoring
+
+  post_tasks:
+    - name: Verify node_exporter is responding
+      ansible.builtin.uri:
+        url: "http://{{ mgmt_ip }}:{{ node_exporter_port }}/metrics"
+        return_content: false
+        status_code: 200
+      register: node_exporter_check
+      retries: 3
+      delay: 5
+
+    - name: Verify Loki is ready
+      ansible.builtin.uri:
+        url: "http://{{ loki_listen_address }}:{{ loki_http_port }}/ready"
+        return_content: true
+        status_code: 200
+      register: loki_check
+      retries: 5
+      delay: 5
+      when: is_controller | default(false)
+
+    - name: Verify Prometheus is responding
+      ansible.builtin.uri:
+        url: "http://{{ prometheus_listen_address }}:{{ prometheus_http_port }}/-/healthy"
+        return_content: false
+        status_code: 200
+      register: prometheus_check
+      retries: 3
+      delay: 5
+      when: is_controller | default(false)
+
+    - name: Verify Grafana is responding
+      ansible.builtin.uri:
+        url: "http://{{ grafana_listen_address }}:{{ grafana_http_port }}/api/health"
+        return_content: false
+        status_code: 200
+      register: grafana_check
+      retries: 3
+      delay: 5
+      when: is_controller | default(false)
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Monitoring Stack Deployed
+          ========================================
+          node_exporter: http://{{ mgmt_ip }}:{{ node_exporter_port }}/metrics
+          {% if is_controller | default(false) %}
+          Loki:          http://{{ loki_listen_address }}:{{ loki_http_port }}
+          Prometheus:    http://{{ prometheus_listen_address }}:{{ prometheus_http_port }}
+          Grafana:       http://{{ grafana_listen_address }}:{{ grafana_http_port }}
+
+          Grafana default login: admin / admin
+          {% endif %}

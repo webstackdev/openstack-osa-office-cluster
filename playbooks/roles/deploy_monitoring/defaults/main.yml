@@ -1,0 +1,41 @@
+---
+# Component versions
+node_exporter_version: "1.9.0"
+promtail_version: "3.4.2"
+loki_version: "3.4.2"
+prometheus_version: "3.2.1"
+
+# Architecture
+monitoring_arch: "amd64"
+
+# Loki
+loki_listen_address: "{{ mgmt_ip }}"
+loki_http_port: 3100
+loki_data_dir: /var/lib/loki
+loki_retention_period: 720h  # 30 days
+
+# Prometheus
+prometheus_listen_address: "{{ mgmt_ip }}"
+prometheus_http_port: 9090
+prometheus_data_dir: /var/lib/prometheus
+prometheus_retention_period: 30d
+prometheus_scrape_interval: 15s
+
+# Promtail
+promtail_http_port: 9080
+loki_push_url: "http://192.168.50.168:{{ loki_http_port }}/loki/api/v1/push"
+
+# node_exporter
+node_exporter_listen_address: "{{ mgmt_ip }}"
+node_exporter_port: 9100
+
+# Grafana
+grafana_listen_address: "{{ mgmt_ip }}"
+grafana_http_port: 3000
+
+# Scrape targets for Prometheus (all nodes)
+prometheus_node_targets:
+  - "192.168.50.168:9100"   # cloud-4core
+  - "192.168.50.171:9100"   # cloud-6core
+  - "192.168.50.178:9100"   # cloud-celeron
+  - "192.168.50.234:9100"   # cloud-eugene

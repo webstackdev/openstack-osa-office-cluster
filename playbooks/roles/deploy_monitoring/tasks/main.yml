@@ -1,0 +1,22 @@
+---
+# Main entrypoint — includes component tasks based on host role.
+# node_exporter and promtail run on ALL nodes.
+# Loki, Prometheus, and Grafana run only on the controller (cloud-4core).
+
+- name: Install node_exporter (all nodes)
+  ansible.builtin.include_tasks: node_exporter.yml
+
+- name: Install Promtail (all nodes)
+  ansible.builtin.include_tasks: promtail.yml
+
+- name: Install Loki (controller only)
+  ansible.builtin.include_tasks: loki.yml
+  when: is_controller | default(false)
+
+- name: Install Prometheus (controller only)
+  ansible.builtin.include_tasks: prometheus.yml
+  when: is_controller | default(false)
+
+- name: Install Grafana (controller only)
+  ansible.builtin.include_tasks: grafana.yml
+  when: is_controller | default(false)

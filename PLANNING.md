@@ -306,6 +306,31 @@ scrape_configs:
 
 All components are open source (AGPLv3 for Loki/Grafana, Apache 2.0 for Prometheus/node_exporter).
 
+| File                    | Purpose                                                      |
+| ----------------------- | ------------------------------------------------------------ |
+| defaults/main.yml       | Pinned versions (node_exporter 1.9.0, Promtail/Loki 3.4.2, Prometheus 3.2.1), ports, paths, retention |
+| tasks/main.yml          | Entrypoint — includes per-component tasks, gates Loki/Prometheus/Grafana on `is_controller` |
+| tasks/node_exporter.yml | Downloads binary, creates user, installs systemd unit — all nodes |
+| tasks/promtail.yml      | Downloads binary, deploys config with per-role scrape targets — all nodes |
+| tasks/loki.yml          | Downloads binary, TSDB+filesystem storage, 30-day retention — controller only |
+| tasks/prometheus.yml    | Downloads binary, scrapes all 4 node_exporters — controller only |
+| tasks/grafana.yml       | APT install from official repo, auto-provisions Loki+Prometheus datasources — controller only |
+| handlers/main.yml       | Restart handlers for all 5 services                          |
+| templates/              | systemd units, Loki/Prometheus/Promtail configs, Grafana datasource provisioning |
+
+Playbook — deploy_monitoring.yml: Runs the role against all hosts, then verifies each service is healthy.
+
+Promtail scrape targets are role-aware:
+
+- Controller (cloud-4core): syslog, journal, HAProxy log, LXC container logs (`/var/lib/lxc/*/rootfs/var/log/**/*.log`)
+- Compute nodes: syslog, journal, nova-compute, OVN, and OVS logs
+
+To deploy:
+
+```bash
+ansible-playbook playbooks/deploy_monitoring.yml
+```
+
 ### Phase 7
 
 Multi-tenancy with separate projects/users

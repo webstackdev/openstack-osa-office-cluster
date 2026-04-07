@@ -1,0 +1,87 @@
+server:
+  http_listen_port: {{ promtail_http_port }}
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: {{ loki_push_url }}
+
+scrape_configs:
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          host: {{ short_hostname }}
+          __path__: /var/log/syslog
+
+  - job_name: journal
+    journal:
+      labels:
+        job: journal
+        host: {{ short_hostname }}
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+{% if is_controller | default(false) %}
+
+  - job_name: haproxy
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: haproxy
+          host: {{ short_hostname }}
+          __path__: /var/log/haproxy.log
+
+  - job_name: lxc_containers
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: openstack
+          host: {{ short_hostname }}
+          __path__: /var/lib/lxc/*/rootfs/var/log/**/*.log
+    pipeline_stages:
+      - match:
+          selector: '{job="openstack"}'
+          stages:
+            - regex:
+                source: filename
+                expression: '/var/lib/lxc/(?P<container>[^/]+)/rootfs/var/log/(?P<logpath>.+)'
+            - labels:
+                container:
+                logpath:
+{% endif %}
+{% if is_compute | default(false) %}
+
+  - job_name: nova_compute
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: nova-compute
+          host: {{ short_hostname }}
+          __path__: /var/log/nova/**/*.log
+
+  - job_name: ovn
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ovn
+          host: {{ short_hostname }}
+          __path__: /var/log/ovn/**/*.log
+
+  - job_name: openvswitch
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: openvswitch
+          host: {{ short_hostname }}
+          __path__: /var/log/openvswitch/**/*.log
+{% endif %}

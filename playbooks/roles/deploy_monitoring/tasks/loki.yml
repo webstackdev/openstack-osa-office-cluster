@@ -1,0 +1,80 @@
+---
+- name: Check if loki is already installed at target version
+  ansible.builtin.stat:
+    path: /usr/local/bin/loki
+  register: loki_bin
+
+- name: Get installed loki version
+  ansible.builtin.command: /usr/local/bin/loki --version
+  register: loki_installed_version
+  changed_when: false
+  failed_when: false
+  when: loki_bin.stat.exists
+
+- name: Download loki
+  ansible.builtin.get_url:
+    url: "https://github.com/grafana/loki/releases/download/v{{ loki_version }}/loki-linux-{{ monitoring_arch }}.zip"
+    dest: "/tmp/loki-{{ loki_version }}.zip"
+    mode: "0644"
+  when: >
+    not loki_bin.stat.exists or
+    loki_version not in (loki_installed_version.stdout | default(''))
+
+- name: Extract loki
+  ansible.builtin.unarchive:
+    src: "/tmp/loki-{{ loki_version }}.zip"
+    dest: /tmp
+    remote_src: true
+  when: >
+    not loki_bin.stat.exists or
+    loki_version not in (loki_installed_version.stdout | default(''))
+
+- name: Install loki binary
+  ansible.builtin.copy:
+    src: /tmp/loki-linux-{{ monitoring_arch }}
+    dest: /usr/local/bin/loki
+    mode: "0755"
+    remote_src: true
+  notify: restart loki
+
+- name: Create loki system user
+  ansible.builtin.user:
+    name: loki
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create loki data directory
+  ansible.builtin.file:
+    path: "{{ loki_data_dir }}"
+    state: directory
+    owner: loki
+    group: loki
+    mode: "0755"
+
+- name: Create loki config directory
+  ansible.builtin.file:
+    path: /etc/loki
+    state: directory
+    mode: "0755"
+
+- name: Deploy loki config
+  ansible.builtin.template:
+    src: loki.yml.j2
+    dest: /etc/loki/loki.yml
+    mode: "0644"
+  notify: restart loki
+
+- name: Deploy loki systemd unit
+  ansible.builtin.template:
+    src: loki.service.j2
+    dest: /etc/systemd/system/loki.service
+    mode: "0644"
+  notify: restart loki
+
+- name: Enable and start loki
+  ansible.builtin.systemd:
+    name: loki
+    enabled: true
+    state: started
+    daemon_reload: true

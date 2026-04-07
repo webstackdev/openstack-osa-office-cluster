@@ -1,0 +1,66 @@
+---
+- name: Install prerequisite packages for Grafana repo
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - software-properties-common
+      - gpg
+    state: present
+
+- name: Add Grafana GPG key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: "0644"
+
+- name: Add Grafana APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+
+- name: Install Grafana
+  ansible.builtin.apt:
+    name: grafana
+    state: present
+    update_cache: true
+
+- name: Configure Grafana listen address
+  ansible.builtin.lineinfile:
+    path: /etc/grafana/grafana.ini
+    regexp: '^;?http_addr\s*='
+    line: "http_addr = {{ grafana_listen_address }}"
+    insertafter: '^\[server\]'
+  notify: restart grafana
+
+- name: Configure Grafana listen port
+  ansible.builtin.lineinfile:
+    path: /etc/grafana/grafana.ini
+    regexp: '^;?http_port\s*='
+    line: "http_port = {{ grafana_http_port }}"
+    insertafter: '^\[server\]'
+  notify: restart grafana
+
+- name: Create Grafana provisioning datasources directory
+  ansible.builtin.file:
+    path: /etc/grafana/provisioning/datasources
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+
+- name: Deploy Grafana datasource provisioning
+  ansible.builtin.template:
+    src: grafana_datasources.yml.j2
+    dest: /etc/grafana/provisioning/datasources/home-cloud.yml
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify: restart grafana
+
+- name: Enable and start Grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    enabled: true
+    state: started
+    daemon_reload: true
