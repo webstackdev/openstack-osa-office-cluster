@@ -48,6 +48,12 @@ glance_default_store: file
 nova_cpu_allocation_ratio: 4.0
 nova_ram_allocation_ratio: 1.5
 
+# Explicitly enable noVNC console proxy for HAProxy.
+# The default Jinja expression computes this from compute-node architecture
+# facts, which are unavailable when running the haproxy playbook alone.
+nova_console_proxy_types:
+  - novnc
+
 # ============================================================================
 # Cinder (Block Storage)
 # ============================================================================

@@ -4,6 +4,7 @@ deploy_monitoring_node_exporter_version: "1.9.0"
 deploy_monitoring_promtail_version: "3.4.2"
 deploy_monitoring_loki_version: "3.4.2"
 deploy_monitoring_prometheus_version: "3.2.1"
+deploy_monitoring_grafana_version: "11.6.0"
 
 # Architecture
 deploy_monitoring_arch: "amd64"

@@ -1,38 +1,25 @@
 ---
-- name: Install prerequisite packages for Grafana repo
-  ansible.builtin.apt:
-    name:
-      - apt-transport-https
-      - software-properties-common
-      - gpg
-    state: present
-
-- name: Download Grafana GPG key to deployment host
+- name: Download Grafana deb to deployment host
   ansible.builtin.get_url:
-    url: https://apt.grafana.com/gpg.key
-    dest: /tmp/grafana.asc
+    url: >-
+      https://dl.grafana.com/oss/release/grafana_{{
+      deploy_monitoring_grafana_version }}_{{ deploy_monitoring_arch }}.deb
+    dest: "/tmp/grafana_{{ deploy_monitoring_grafana_version }}_{{ deploy_monitoring_arch }}.deb"
     mode: "0644"
   delegate_to: localhost
   become: false
   run_once: true
 
-- name: Copy Grafana GPG key to target
+- name: Copy Grafana deb to target
   ansible.builtin.copy:
-    src: /tmp/grafana.asc
-    dest: /etc/apt/keyrings/grafana.asc
+    src: "/tmp/grafana_{{ deploy_monitoring_grafana_version }}_{{ deploy_monitoring_arch }}.deb"
+    dest: "/tmp/grafana_{{ deploy_monitoring_grafana_version }}_{{ deploy_monitoring_arch }}.deb"
     mode: "0644"
 
-- name: Add Grafana APT repository
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
-    filename: grafana
-    state: present
-
-- name: Install Grafana
+- name: Install Grafana from deb
   ansible.builtin.apt:
-    name: grafana
+    deb: "/tmp/grafana_{{ deploy_monitoring_grafana_version }}_{{ deploy_monitoring_arch }}.deb"
     state: present
-    update_cache: true
 
 - name: Configure Grafana listen address
   ansible.builtin.lineinfile:

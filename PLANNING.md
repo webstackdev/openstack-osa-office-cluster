@@ -331,7 +331,11 @@ To deploy:
 ansible-playbook playbooks/deploy_monitoring.yml
 ```
 
-### Phase 7
+### Phase 8 - Install Barbican Key Manager
+
+
+
+### Last Phase
 
 Multi-tenancy with separate projects/users
 
