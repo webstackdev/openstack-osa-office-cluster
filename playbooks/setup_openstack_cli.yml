@@ -17,6 +17,7 @@
       - python-heatclient
       - python-barbicanclient
       - python-manilaclient
+      - osc-placement
 
   tasks:
     - name: Install OpenStack CLI and plugins
