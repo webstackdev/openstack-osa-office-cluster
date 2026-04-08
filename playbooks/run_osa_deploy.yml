@@ -56,3 +56,27 @@
       args:
         chdir: "{{ osa_base_dir }}/playbooks"
       changed_when: true
+
+# OSA's lxc_hosts role masks lxc-net and relies on systemd-networkd to create
+# lxcbr0. Since our nodes use NetworkManager (not systemd-networkd), lxcbr0 is
+# never created at boot and all LXC containers lose network connectivity.
+# This post-deploy play undoes the masking and fixes the LXC_NETWORK format
+# (OSA's template expands to netmask notation but nftables requires CIDR).
+- name: Fix LXC networking for NetworkManager hosts
+  hosts: controllers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Unmask and enable lxc-net service
+      ansible.builtin.systemd:
+        name: lxc-net
+        masked: false
+        enabled: true
+        state: started
+
+    - name: Fix LXC_NETWORK to use CIDR notation in /etc/default/lxc-net
+      ansible.builtin.lineinfile:
+        path: /etc/default/lxc-net
+        regexp: '^LXC_NETWORK='
+        line: 'LXC_NETWORK="10.0.3.0/24"'

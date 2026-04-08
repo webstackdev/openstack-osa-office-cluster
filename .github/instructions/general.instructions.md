@@ -35,6 +35,11 @@ This has caused real production issues — an SSH `trusted_ca` file was silently
 - **OpenStack version:** 2025.2 (Flamingo), `stable/2025.2` branch
 - **OSA location:** `/opt/openstack-ansible` on the deployment host
 - **OSA config:** `/etc/openstack_deploy/` on the deployment host
+- **Network manager:** All nodes use **NetworkManager** (Ubuntu 24.04 desktop default), **not** systemd-networkd. OSA assumes systemd-networkd in some roles (e.g., `lxc_hosts` masks `lxc-net` and creates bridge configs under `/etc/systemd/network/`), but since systemd-networkd is disabled on these nodes, those configs have no effect. NetworkManager manages all host networking including the `br-mgmt` bridge.
+
+## Git Policy
+
+- **Never run `git add`, `git commit`, `git push`, or `git amend` on behalf of the user.** The user handles all Git operations manually.
 
 ## SSH Environment
 
