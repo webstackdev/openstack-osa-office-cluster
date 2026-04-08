@@ -4,6 +4,14 @@
 3 compute nodes (cloud-6core, cloud-celeron, cloud-eugene) — all enabled / up
 6 OVN agents (3 Controller Gateway + 3 Metadata) — all `:-)` / UP
 
+## Contributions
+
+he barbican-ui package is essentially a scaffolding project — the panel group (_90) sets PANEL_GROUP_DASHBOARD = 'barbican', which refers to a top-level dashboard slug barbican that doesn't exist. Normal Horizon plugins register under PANEL_GROUP_DASHBOARD = 'project' to appear in the Project tab. Since there's no barbican dashboard defined, the panel silently goes nowhere.
+
+This is consistent with the OSA defaults comment that said barbican-ui "does not provide any functionality at this time" and why horizon_enable_barbican_ui defaults to false. The project has only 13 commits and its README says "Features: TODO".
+
+Bottom line: The barbican-ui package is not functional — it's an incomplete scaffolding. There is no working Barbican Horizon plugin at this point. The Barbican team hasn't built out the UI. You can manage secrets via the CLI (openstack secret store/list/get/delete), which is the standard approach.
+
 ## Node roles (adapted for 4-node home lab)
 
 | OSA Role | Host | Notes |
@@ -465,6 +473,189 @@ Need to make sure we install plugins to Horizon for all of the services we add t
 - openstack-dashboard-heat-partition
 - barbican-ui
 
+### Phase 11 — Manila Shared File Systems service
+
+**Goal:** Deploy the OpenStack Shared File Systems service (Manila) so tenants can create and manage NFS shares. Uses an LVM backend on cloud-4core with NFS exports — similar in spirit to how Cinder uses LVM+iSCSI for block storage.
+
+**Current state:** `/dev/sdb` (931.5G HDD) on cloud-4core is unused, already formatted with XFS, not mounted, not an LVM PV. Manila secrets already generated in `user_secrets.yml`. The `manila.yml` env.d mapping ships with OSA.
+
+#### Manila Architecture
+
+Manila has a split architecture in OSA:
+
+- **manila-infra** (LXC container on cloud-4core): runs `manila-api` and `manila-scheduler`
+- **manila-data** (bare metal on cloud-4core): runs `manila-share` and `manila-data` — needs direct access to the LVM VG and NFS exports
+
+The LVM share driver creates logical volumes on `manila-shares` VG and exports them as NFS shares. `driver_handles_share_servers: False` means Manila doesn't spin up share server VMs — the NFS server runs directly on cloud-4core.
+
+```bash
+┌─────────────────────────────────────────────────────┐
+│  cloud-4core                                        │
+│  ┌──────────────────────────────────────────────┐   │
+│  │ manila-api container (LXC)                   │   │
+│  │  manila-api (WSGI) :8786                     │   │
+│  │  manila-scheduler                            │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                     │
+│  manila-share (bare metal)                          │
+│  manila-data (bare metal)                           │
+│  ┌──────────────────────────────────────────────┐   │
+│  │ /dev/sdb → PV → VG "manila-shares"           │   │
+│  │ LVM driver creates LVs → formats XFS         │   │
+│  │ NFS server exports each LV as a share        │   │
+│  └──────────────────────────────────────────────┘   │
+│  HAProxy :8786 → manila-api container :8786         │
+└─────────────────────────────────────────────────────┘
+```
+
+- **API** on port 8786, fronted by HAProxy with SSL termination
+- **Storage**: LVM logical volumes on the `manila-shares` VG, formatted and exported via NFS
+- **Export IP**: `192.168.50.168` (cloud-4core management IP) — tenants mount shares from this IP
+- Keystone endpoint registered automatically by the OSA role
+
+#### Implementation Steps
+
+**Step 1 — Prepare /dev/sdb for LVM**
+
+The disk is currently formatted with XFS as a whole-disk filesystem. We need to wipe it and create an LVM PV and VG:
+
+```bash
+ssh cloud-4core
+sudo wipefs -a /dev/sdb        # Remove existing XFS signature
+sudo pvcreate /dev/sdb
+sudo vgcreate manila-shares /dev/sdb
+sudo vgs manila-shares          # Verify: ~931G free
+```
+
+**Step 2 — Add Manila hosts to `openstack_user_config.yml.j2`**
+
+Add after `key-manager_hosts`:
+
+```yaml
+# Manila Shared File Systems — API/scheduler in LXC, share/data on bare metal
+manila-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+manila-data_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+    container_vars:
+      manila_default_share_type: nfs-share1
+      manila_enabled_share_protocols: NFS
+      manila_backends:
+        nfs-share1:
+          share_backend_name: NFS_SHARE1
+          share_driver: manila.share.drivers.lvm.LVMShareDriver
+          driver_handles_share_servers: False
+          lvm_share_volume_group: manila-shares
+          lvm_share_export_ips: 192.168.50.168
+```
+
+**Step 3 — Deploy updated config**
+
+```bash
+ansible-playbook playbooks/deploy_osa_config.yml --diff
+```
+
+**Step 4 — Create the Manila container and run the install playbook**
+
+```bash
+cd /opt/openstack-ansible
+# Create the Manila LXC container first
+openstack-ansible playbooks/lxc-containers-create.yml --limit manila_all
+# Install Manila
+openstack-ansible playbooks/os-manila-install.yml
+```
+
+This will:
+
+1. Create the `manila_container` LXC on cloud-4core (API + scheduler)
+2. Install manila-share and manila-data on cloud-4core bare metal
+3. Install NFS server packages on cloud-4core
+4. Create the `manila` Galera database and user
+5. Register the `shared-file-system` service and endpoint in Keystone
+6. Configure the LVM NFS backend
+7. Deploy the HAProxy backend for port 8786
+8. Start all services
+
+**Step 5 — Re-run Horizon install (for manila-ui)**
+
+Horizon auto-enables `manila-ui` when `manila_all` group exists — no variable needed:
+
+```bash
+openstack-ansible playbooks/os-horizon-install.yml
+```
+
+**Step 6 — Add python-manilaclient to CLI playbook**
+
+Add `python-manilaclient` to `openstack_cli_packages` in `playbooks/setup_openstack_cli.yml`, then run:
+
+```bash
+ansible-playbook playbooks/setup_openstack_cli.yml
+```
+
+**Step 7 — Verify**
+
+```bash
+# Check service is registered
+openstack --os-cloud home-cloud service list | grep shared-file-system
+
+# Check endpoint
+openstack --os-cloud home-cloud endpoint list | grep manila
+
+# Create a share type (admin)
+openstack --os-cloud home-cloud share type create nfs-share1 False \
+  --extra-specs share_backend_name=NFS_SHARE1
+
+# Create a test share
+openstack --os-cloud home-cloud share create NFS 1 --name test-share
+
+# Wait for status "available"
+openstack --os-cloud home-cloud share show test-share
+
+# Grant access (allow an IP to mount)
+openstack --os-cloud home-cloud share access create test-share ip 192.168.50.0/24
+
+# Get export path
+openstack --os-cloud home-cloud share export location list test-share
+
+# Test mount from a node (e.g. cloud-6core):
+#   sudo mount -t nfs 192.168.50.168:/path/to/export /mnt/test
+#   echo "hello" | sudo tee /mnt/test/hello.txt
+#   sudo umount /mnt/test
+
+# Clean up
+openstack --os-cloud home-cloud share access delete test-share <access-id>
+openstack --os-cloud home-cloud share delete test-share
+```
+
+#### What OSA handles automatically for Manila
+
+- LXC container creation and networking for API/scheduler
+- Bare-metal service installation for share/data
+- NFS server installation (`nfs-kernel-server`) on the data host
+- Galera database and user
+- RabbitMQ vhost and user
+- Keystone service catalog registration (service type `shared-file-system`, port 8786)
+- HAProxy frontend/backend on VIP port 8786 (SSL-terminated)
+- Horizon plugin auto-enablement when `manila_all` group exists
+
+#### No custom env.d needed
+
+The built-in `env.d/manila.yml` mapping handles the split architecture: API/scheduler in LXC (`manila_container`), share/data on bare metal (`manila_data_container` with `is_metal: true`). No override needed.
+
+#### Key differences from Cinder LVM
+
+| | Cinder LVM | Manila LVM |
+|---|---|---|
+| **Protocol** | iSCSI (block) | NFS (file) |
+| **Host** | cloud-eugene | cloud-4core |
+| **Disk** | `/dev/sde` (476G SSD) | `/dev/sdb` (931G HDD) |
+| **VG name** | `cinder-volumes` | `manila-shares` |
+| **Container** | Bare metal (env.d override) | Bare metal (built-in env.d) |
+| **Client mounts** | Nova attaches via iSCSI | Tenant mounts via NFS |
+
 ### Last Phase
 
 Multi-tenancy with separate projects/users
@@ -561,3 +752,67 @@ Control plane VMs. The Octavia load balancer sits in front of the Kubernetes API
 Worker nodes don't run kube-apiserver, so they're not behind the LB. Workers connect to the LB as clients (kubelet → LB VIP → kube-apiserver).
 
 With a single control plane node (your likely lab setup), the LB is redundant — kubectl can just point directly at that one node's IP, which is why master_lb_enabled: false works for single-master clusters.
+
+---
+
+## Session Notes — 2026-04-08 (Manila Installation)
+
+### What was completed
+
+- **Phase 11 Steps 1–4 done.** Manila is installed and services are running.
+  - VG `manila-shares` created on `/dev/sdb` (931.51G) on cloud-4core
+  - `manila-infra_hosts` and `manila-data_hosts` added to `openstack_user_config.yml.j2`
+  - Config deployed, `python-manilaclient` added to CLI playbook and installed
+  - Manila LXC container created: `cloud-4core-manila-container-6bf04903`
+  - `os-manila-install.yml` completed successfully (required `venv_wheels_rebuild=true` on first run)
+  - HAProxy backend for Manila (port 8786) configured via `haproxy-install.yml`
+
+- **IPv4 preference fix codified in IaC** (new this session):
+  - `prepare_target_host/tasks/main.yml`: `lineinfile` sets `precedence ::ffff:0:0/96  100` in `/etc/gai.conf` on bare-metal hosts
+  - `user_variables.yml.j2`: `lxc_container_commands` injects the same into every LXC container at creation time
+  - **Root cause:** Lab network has no IPv6 route to the internet. The repo container tried IPv6 first for `git clone` / `pip wheel` to opendev.org and failed with "Network is unreachable". This blocked the Manila wheel build until the gai.conf fix was applied manually to the repo container.
+  - The manual fix on the repo container (`cloud-4core-repo-container-e2ee6d6e`) is already in place; the IaC changes ensure new containers get it automatically.
+
+- **Barbican UI** investigated — non-functional scaffolding, noted in Contributions section above.
+
+- **Heat dashboard** confirmed working (Orchestration tab in Horizon).
+
+### What remains (pick up here)
+
+1. **Step 5 — Re-run Horizon install for manila-ui:**
+   ```bash
+   cd /opt/openstack-ansible
+   sudo openstack-ansible playbooks/os-horizon-install.yml
+   ```
+
+2. **Step 7 — Manila end-to-end verification** (see Phase 11 Step 7 above for full commands):
+   - `openstack service list | grep shared-file-system`
+   - `openstack endpoint list | grep manila`
+   - Create share type `nfs-share1`, create test NFS share, grant IP access, test mount from compute node, clean up
+
+3. **Deploy the IaC changes** to apply the IPv4 preference to all hosts/containers:
+   ```bash
+   ansible-playbook playbooks/deploy_osa_config.yml --diff
+   ansible-playbook playbooks/prepare_target_hosts.yml
+   ```
+
+4. **Git commit** all changes (Manila config, CLI playbook, IPv4 fix, PLANNING.md updates).
+
+### Key artifacts
+
+| Item | Value |
+|---|---|
+| Manila container | `cloud-4core-manila-container-6bf04903` |
+| Repo container | `cloud-4core-repo-container-e2ee6d6e` |
+| Manila VG | `manila-shares` on `/dev/sdb` (cloud-4core) |
+| Manila export IP | `192.168.50.168` |
+| Manila API port | 8786 (HAProxy SSL) |
+| Constraints file | `/var/www/repo/os-releases/32.0.0.0b2.dev7/ubuntu-24.04-x86_64/requirements/manila-32.0.0.0b2.dev7-constraints.txt` |
+
+### Files modified this session (uncommitted)
+
+- `playbooks/templates/openstack_deploy/openstack_user_config.yml.j2` — Manila hosts
+- `playbooks/templates/openstack_deploy/user_variables.yml.j2` — `lxc_container_commands` for IPv4, `horizon_enable_barbican_ui`
+- `playbooks/setup_openstack_cli.yml` — added `python-manilaclient`
+- `playbooks/roles/prepare_target_host/tasks/main.yml` — IPv4 gai.conf task
+- `PLANNING.md` — Phase 11 plan, Contributions section, these session notes

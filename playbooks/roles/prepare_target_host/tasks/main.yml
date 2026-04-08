@@ -78,6 +78,13 @@
   failed_when: false
   when: "'compute' in group_names"
 
+- name: Prefer IPv4 over IPv6 for outbound connections
+  ansible.builtin.lineinfile:
+    path: /etc/gai.conf
+    regexp: '^precedence\s+::ffff:0:0/96'
+    line: 'precedence ::ffff:0:0/96  100'
+    state: present
+
 - name: Configure SSH client to skip cert verification for internal IPs
   ansible.builtin.template:
     src: ssh_client_openstack.conf.j2

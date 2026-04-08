@@ -161,3 +161,22 @@ coordination_hosts:
 key-manager_hosts:
   cloud-4core:
     ip: 192.168.50.168
+
+# Manila Shared File Systems — API/scheduler in LXC, share/data on bare metal
+manila-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+manila-data_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+    container_vars:
+      manila_default_share_type: nfs-share1
+      manila_enabled_share_protocols: NFS
+      manila_backends:
+        nfs-share1:
+          share_backend_name: NFS_SHARE1
+          share_driver: manila.share.drivers.lvm.LVMShareDriver
+          driver_handles_share_servers: False
+          lvm_share_volume_group: manila-shares
+          lvm_share_export_ips: 192.168.50.168

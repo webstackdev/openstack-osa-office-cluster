@@ -99,6 +99,21 @@ nova_service_key_manager: barbican
 # Session timeout: 8 hours (default is 1800 = 30 minutes)
 horizon_session_timeout: 28800
 
+# Enable Barbican UI plugin (secrets management panel)
+# Heat dashboard auto-enables when heat_all group exists — no explicit setting needed
+horizon_enable_barbican_ui: true
+
+# ============================================================================
+# LXC container networking
+# ============================================================================
+# The lab network has no IPv6 route to the internet. Without this, containers
+# try IPv6 first for git clones / pip downloads and fail with
+# "Network is unreachable". Set gai.conf to prefer IPv4.
+lxc_container_commands: |
+  if ! grep -q '^precedence ::ffff:0:0/96' /etc/gai.conf 2>/dev/null; then
+    echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf
+  fi
+
 # ============================================================================
 # LXC container image
 # ============================================================================

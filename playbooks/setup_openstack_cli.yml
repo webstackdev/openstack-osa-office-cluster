@@ -16,6 +16,7 @@
       - python-openstackclient
       - python-heatclient
       - python-barbicanclient
+      - python-manilaclient
 
   tasks:
     - name: Install OpenStack CLI and plugins
