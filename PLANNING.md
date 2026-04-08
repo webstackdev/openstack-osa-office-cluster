@@ -331,9 +331,139 @@ To deploy:
 ansible-playbook playbooks/deploy_monitoring.yml
 ```
 
-### Phase 8 - Install Barbican Key Manager
+### Phase 8 — Install Barbican Key Manager
 
+**Goal:** Deploy the OpenStack Key Manager service (Barbican) for secret storage — encryption keys, certificates, passphrases. This is a prerequisite for Nova volume encryption, Cinder encrypted volumes, and Magnum (which stores cluster TLS certs in Barbican).
 
+**Current state:** Barbican secrets already generated in `/etc/openstack_deploy/user_secrets.yml` (from `pw-token-gen.py`). The `barbican.yml` env.d mapping and HAProxy service definition ship with OSA. No `key-manager_hosts` entry exists in `openstack_user_config.yml` yet.
+
+#### Barbican Architecture
+
+Barbican runs in an LXC container on cloud-4core (same as all other API services). It uses the **simple crypto** plugin — a symmetric key stored in `barbican.conf` that encrypts secrets at rest in the Galera database. This is appropriate for a home lab; production would use an HSM backend (PKCS#11 or Vault).
+
+```bash
+┌─────────────────────────────────────────────┐
+│  cloud-4core                                │
+│  ┌──────────────────────────────────────┐   │
+│  │ barbican-api container               │   │
+│  │  barbican-api (WSGI) :9311           │   │
+│  │  barbican-keystone-listener          │   │
+│  │  barbican-worker                     │   │
+│  │  secret store: simple_crypto         │   │
+│  └──────────────────────────────────────┘   │
+│  HAProxy :9311 → barbican container :9311   │
+└─────────────────────────────────────────────┘
+```
+
+- **API** listens on port 9311, fronted by HAProxy with SSL termination
+- **simple_crypto KEK** already generated in `user_secrets.yml` as `barbican_simple_crypto_key`
+- Keystone endpoint registered automatically by the OSA role
+
+#### Implementation Steps
+
+**Step 1 — Add `key-manager_hosts` to `openstack_user_config.yml.j2`**
+
+Add alongside the other host group definitions (after `coordination_hosts`):
+
+```yaml
+key-manager_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+This tells OSA to create a `barbican_container` LXC container on cloud-4core and assign it to the `barbican_api` / `barbican_all` groups (via the built-in `env.d/barbican.yml` mapping).
+
+**Step 2 — Deploy updated config**
+
+```bash
+ansible-playbook playbooks/deploy_osa_config.yml --diff
+```
+
+Pushes the updated `openstack_user_config.yml` to `/etc/openstack_deploy/`.
+
+**Step 3 — Run the Barbican install playbook**
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/os-barbican-install.yml
+```
+
+This will:
+
+1. Create the `barbican_container` LXC on cloud-4core
+2. Install Barbican from source (stable/2025.2)
+3. Create the `barbican` Galera database and user
+4. Register the `key-manager` service and endpoint in Keystone
+5. Configure the simple_crypto secret store plugin
+6. Deploy the HAProxy backend for port 9311
+7. Start `barbican-api`, `barbican-worker`, and `barbican-keystone-listener`
+
+**Step 4 — Verify**
+
+```bash
+# Check service is registered
+openstack --os-cloud home-cloud service list | grep key-manager
+
+# Check endpoint
+openstack --os-cloud home-cloud endpoint list | grep barbican
+
+# Store and retrieve a test secret
+openstack --os-cloud home-cloud secret store \
+  --name test-secret --payload "s3cret" \
+  --payload-content-type text/plain
+
+openstack --os-cloud home-cloud secret list
+openstack --os-cloud home-cloud secret get <secret-href> --payload
+
+# Clean up
+openstack --os-cloud home-cloud secret delete <secret-href>
+```
+
+**Step 5 — Enable Nova/Cinder Barbican integration**
+
+To allow encrypted volumes, add to `user_variables.yml.j2`:
+
+```yaml
+# Cinder — use Barbican for volume encryption keys
+cinder_service_key_manager: barbican
+
+# Nova — use Barbican for ephemeral disk encryption keys (if desired)
+nova_service_key_manager: barbican
+```
+
+Then re-run the Cinder and Nova playbooks with config tags:
+
+```bash
+openstack-ansible playbooks/os-cinder-install.yml --tags cinder-config
+openstack-ansible playbooks/os-nova-install.yml --tags nova-config
+```
+
+#### What OSA handles automatically
+
+- LXC container creation and networking
+- Galera database and user
+- RabbitMQ vhost and user
+- Keystone service catalog registration (service type `key-manager`, port 9311)
+- HAProxy frontend/backend on VIP port 9311 (SSL-terminated)
+- `barbican.conf` with simple_crypto plugin and KEK from `user_secrets.yml`
+- Systemd services for API, worker, and Keystone listener
+
+#### No custom env.d or conf.d needed
+
+Unlike Cinder (which needed a `env.d/cinder.yml` override for bare-metal LVM), Barbican runs entirely inside its LXC container with no host-level dependencies. The built-in `env.d/barbican.yml` mapping is sufficient.
+
+### Phase 9 — Playbook for Openstack CLI on this workstation
+
+- Install Openstack CLI on this workstation (it's already installed, just need to scaffold it IaC)
+- Install python-heatclient (already installed, again just IaC)
+- Install python-barbicanclient
+
+### Phase 10 — Updates to Horizon
+
+Need to make sure we install plugins to Horizon for all of the services we add that aren't default:
+
+- openstack-dashboard-heat-partition
+- barbican-ui
 
 ### Last Phase
 
@@ -376,7 +506,7 @@ For a home lab behind a NAT router, this is less urgent
 
 The biggest value items are projects/users and images — those are what make the cloud actually usable beyond testing. Quotas and hardening are "nice to have" for a home lab.
 
-### Phase 8
+### Phase X - Magnum and Zun
 
 Your current setup can only launch VMs (KVM/QEMU) via Nova. There's no container workload support deployed.
 

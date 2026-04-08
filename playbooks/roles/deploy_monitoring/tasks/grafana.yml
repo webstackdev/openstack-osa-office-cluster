@@ -54,6 +54,43 @@
     mode: "0640"
   notify: Restart grafana
 
+- name: Create Grafana provisioning dashboards directory
+  ansible.builtin.file:
+    path: /etc/grafana/provisioning/dashboards
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+
+- name: Deploy Grafana dashboard provider
+  ansible.builtin.template:
+    src: grafana_dashboard_provider.yml.j2
+    dest: /etc/grafana/provisioning/dashboards/home-cloud.yml
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Create Grafana dashboards directory
+  ansible.builtin.file:
+    path: /var/lib/grafana/dashboards
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+
+- name: Deploy Grafana dashboards
+  ansible.builtin.copy:
+    src: "grafana_dashboards/{{ item }}"
+    dest: "/var/lib/grafana/dashboards/{{ item }}"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  loop:
+    - node_overview.json
+    - openstack_logs.json
+  notify: Restart grafana
+
 - name: Enable and start Grafana
   ansible.builtin.systemd:
     name: grafana-server

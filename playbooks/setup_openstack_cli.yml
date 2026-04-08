@@ -1,0 +1,34 @@
+---
+# Install the OpenStack CLI and service plugins on the deployment workstation.
+#
+# Usage: ansible-playbook playbooks/setup_openstack_cli.yml
+#
+# Add new plugins to openstack_cli_plugins below as services are added.
+
+- name: Install OpenStack CLI and plugins
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+
+  vars:
+    openstack_cli_packages:
+      - python-openstackclient
+      - python-heatclient
+      - python-barbicanclient
+
+  tasks:
+    - name: Install OpenStack CLI and plugins
+      ansible.builtin.pip:
+        name: "{{ openstack_cli_packages }}"
+        state: present
+
+    - name: Verify openstack CLI is available
+      ansible.builtin.command:
+        cmd: openstack --version
+      changed_when: false
+      register: _openstack_version
+
+    - name: Show installed version
+      ansible.builtin.debug:
+        msg: "{{ _openstack_version.stdout | default(_openstack_version.stderr) }}"

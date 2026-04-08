@@ -85,6 +85,15 @@ swift:
 swift_default_replication_number: 1
 
 # ============================================================================
+# Barbican (Key Manager) integration
+# ============================================================================
+# Use Barbican for Cinder volume encryption keys
+cinder_service_key_manager: barbican
+
+# Use Barbican for Nova ephemeral disk encryption keys
+nova_service_key_manager: barbican
+
+# ============================================================================
 # Horizon (Dashboard)
 # ============================================================================
 # Session timeout: 8 hours (default is 1800 = 30 minutes)
