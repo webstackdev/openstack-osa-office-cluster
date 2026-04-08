@@ -656,6 +656,10 @@ The built-in `env.d/manila.yml` mapping handles the split architecture: API/sche
 | **Container** | Bare metal (env.d override) | Bare metal (built-in env.d) |
 | **Client mounts** | Nova attaches via iSCSI | Tenant mounts via NFS |
 
+### Phase 12
+
+(**Designate**) DNS service [(install guide)](https://docs.openstack.org/designate/2025.1/install/) [(user guide)](https://docs.openstack.org/designate/2025.1/user/) [(dashboard)](https://opendev.org/openstack/designate-dashboard) - `python-designateclient`, `designate-dashboard` or `openstack-designate-ui`
+
 ### Last Phase
 
 Multi-tenancy with separate projects/users
@@ -752,67 +756,3 @@ Control plane VMs. The Octavia load balancer sits in front of the Kubernetes API
 Worker nodes don't run kube-apiserver, so they're not behind the LB. Workers connect to the LB as clients (kubelet → LB VIP → kube-apiserver).
 
 With a single control plane node (your likely lab setup), the LB is redundant — kubectl can just point directly at that one node's IP, which is why master_lb_enabled: false works for single-master clusters.
-
----
-
-## Session Notes — 2026-04-08 (Manila Installation)
-
-### What was completed
-
-- **Phase 11 Steps 1–4 done.** Manila is installed and services are running.
-  - VG `manila-shares` created on `/dev/sdb` (931.51G) on cloud-4core
-  - `manila-infra_hosts` and `manila-data_hosts` added to `openstack_user_config.yml.j2`
-  - Config deployed, `python-manilaclient` added to CLI playbook and installed
-  - Manila LXC container created: `cloud-4core-manila-container-6bf04903`
-  - `os-manila-install.yml` completed successfully (required `venv_wheels_rebuild=true` on first run)
-  - HAProxy backend for Manila (port 8786) configured via `haproxy-install.yml`
-
-- **IPv4 preference fix codified in IaC** (new this session):
-  - `prepare_target_host/tasks/main.yml`: `lineinfile` sets `precedence ::ffff:0:0/96  100` in `/etc/gai.conf` on bare-metal hosts
-  - `user_variables.yml.j2`: `lxc_container_commands` injects the same into every LXC container at creation time
-  - **Root cause:** Lab network has no IPv6 route to the internet. The repo container tried IPv6 first for `git clone` / `pip wheel` to opendev.org and failed with "Network is unreachable". This blocked the Manila wheel build until the gai.conf fix was applied manually to the repo container.
-  - The manual fix on the repo container (`cloud-4core-repo-container-e2ee6d6e`) is already in place; the IaC changes ensure new containers get it automatically.
-
-- **Barbican UI** investigated — non-functional scaffolding, noted in Contributions section above.
-
-- **Heat dashboard** confirmed working (Orchestration tab in Horizon).
-
-### What remains (pick up here)
-
-1. **Step 5 — Re-run Horizon install for manila-ui:**
-   ```bash
-   cd /opt/openstack-ansible
-   sudo openstack-ansible playbooks/os-horizon-install.yml
-   ```
-
-2. **Step 7 — Manila end-to-end verification** (see Phase 11 Step 7 above for full commands):
-   - `openstack service list | grep shared-file-system`
-   - `openstack endpoint list | grep manila`
-   - Create share type `nfs-share1`, create test NFS share, grant IP access, test mount from compute node, clean up
-
-3. **Deploy the IaC changes** to apply the IPv4 preference to all hosts/containers:
-   ```bash
-   ansible-playbook playbooks/deploy_osa_config.yml --diff
-   ansible-playbook playbooks/prepare_target_hosts.yml
-   ```
-
-4. **Git commit** all changes (Manila config, CLI playbook, IPv4 fix, PLANNING.md updates).
-
-### Key artifacts
-
-| Item | Value |
-|---|---|
-| Manila container | `cloud-4core-manila-container-6bf04903` |
-| Repo container | `cloud-4core-repo-container-e2ee6d6e` |
-| Manila VG | `manila-shares` on `/dev/sdb` (cloud-4core) |
-| Manila export IP | `192.168.50.168` |
-| Manila API port | 8786 (HAProxy SSL) |
-| Constraints file | `/var/www/repo/os-releases/32.0.0.0b2.dev7/ubuntu-24.04-x86_64/requirements/manila-32.0.0.0b2.dev7-constraints.txt` |
-
-### Files modified this session (uncommitted)
-
-- `playbooks/templates/openstack_deploy/openstack_user_config.yml.j2` — Manila hosts
-- `playbooks/templates/openstack_deploy/user_variables.yml.j2` — `lxc_container_commands` for IPv4, `horizon_enable_barbican_ui`
-- `playbooks/setup_openstack_cli.yml` — added `python-manilaclient`
-- `playbooks/roles/prepare_target_host/tasks/main.yml` — IPv4 gai.conf task
-- `PLANNING.md` — Phase 11 plan, Contributions section, these session notes

@@ -172,7 +172,8 @@ manila-data_hosts:
     ip: 192.168.50.168
     container_vars:
       manila_default_share_type: nfs-share1
-      manila_enabled_share_protocols: NFS
+      manila_enabled_share_protocols:
+        - NFS
       manila_backends:
         nfs-share1:
           share_backend_name: NFS_SHARE1
