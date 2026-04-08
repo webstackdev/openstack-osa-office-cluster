@@ -36,7 +36,11 @@ deploy_monitoring_grafana_http_port: 3000
 
 # Scrape targets for Prometheus (all nodes)
 deploy_monitoring_prometheus_node_targets:
-  - "192.168.50.168:9100"   # cloud-4core
-  - "192.168.50.171:9100"   # cloud-6core
-  - "192.168.50.178:9100"   # cloud-celeron
-  - "192.168.50.234:9100"   # cloud-eugene
+  - address: "192.168.50.168:9100"
+    hostname: "mgmt.cloud-4core.local"
+  - address: "192.168.50.171:9100"
+    hostname: "mgmt.cloud-6core.local"
+  - address: "192.168.50.178:9100"
+    hostname: "mgmt.cloud-celeron.local"
+  - address: "192.168.50.234:9100"
+    hostname: "mgmt.cloud-eugene.local"

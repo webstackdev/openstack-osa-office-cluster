@@ -5,10 +5,15 @@ global:
 scrape_configs:
   - job_name: node
     static_configs:
-      - targets:
 {% for target in deploy_monitoring_prometheus_node_targets %}
-          - "{{ target }}"
+      - targets:
+          - "{{ target.address }}"
+        labels:
+          hostname: "{{ target.hostname }}"
 {% endfor %}
+    relabel_configs:
+      - source_labels: [hostname]
+        target_label: instance
 
   - job_name: prometheus
     static_configs:

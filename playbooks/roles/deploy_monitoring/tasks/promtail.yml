@@ -41,6 +41,9 @@
     dest: /usr/local/bin/promtail
     mode: "0755"
     remote_src: true
+  when: >
+    not deploy_monitoring_promtail_bin.stat.exists or
+    deploy_monitoring_promtail_version not in (deploy_monitoring_promtail_installed_version.stdout | default(''))
   notify: Restart promtail
 
 - name: Create promtail system user

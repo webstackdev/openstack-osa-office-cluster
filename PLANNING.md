@@ -656,7 +656,7 @@ The built-in `env.d/manila.yml` mapping handles the split architecture: API/sche
 | **Container** | Bare metal (env.d override) | Bare metal (built-in env.d) |
 | **Client mounts** | Nova attaches via iSCSI | Tenant mounts via NFS |
 
-### Phase 12
+### Phase 12 - Designate DNS Service
 
 (**Designate**) DNS service [(install guide)](https://docs.openstack.org/designate/2025.1/install/) [(user guide)](https://docs.openstack.org/designate/2025.1/user/) [(dashboard)](https://opendev.org/openstack/designate-dashboard) - `python-designateclient`, `designate-dashboard` or `openstack-designate-ui`
 

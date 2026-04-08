@@ -44,6 +44,9 @@
   loop:
     - prometheus
     - promtool
+  when: >
+    not deploy_monitoring_prometheus_bin.stat.exists or
+    deploy_monitoring_prometheus_version not in (deploy_monitoring_prometheus_installed_version.stdout | default(''))
   notify: Restart prometheus
 
 - name: Create prometheus system user
