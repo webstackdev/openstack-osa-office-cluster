@@ -17,6 +17,7 @@
       - python-heatclient
       - python-barbicanclient
       - python-manilaclient
+      - python-designateclient
       - osc-placement
 
   tasks:

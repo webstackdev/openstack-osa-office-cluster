@@ -181,3 +181,8 @@ manila-data_hosts:
           driver_handles_share_servers: False
           lvm_share_volume_group: manila-shares
           lvm_share_export_ips: 192.168.50.168
+
+# Designate DNS-as-a-Service — all services in LXC
+dnsaas_hosts:
+  cloud-4core:
+    ip: 192.168.50.168

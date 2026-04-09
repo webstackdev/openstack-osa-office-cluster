@@ -142,3 +142,43 @@ lxc_container_ssh_key: /root/.ssh/id_rsa.pub
 # NOTE: ansible_user, ansible_become, and ansible_ssh_private_key_file are set
 # in group_vars/ (not here) because user_variables.yml is loaded as extra vars
 # (-e @) which would override group-level overrides for containers.
+
+# ============================================================================
+# Designate (DNS)
+# ============================================================================
+# BIND9 pool configuration — single nameserver in the Designate container
+designate_pools_yaml:
+  - name: "default"
+    description: "Default BIND9 Pool"
+    attributes: {}
+    ns_records:
+      - hostname: "ns1.home.cloud."
+        priority: 1
+    nameservers:
+      - host: 127.0.0.1
+        port: 53
+    targets:
+      - type: bind9
+        description: "BIND9 on cloud-4core"
+        masters:
+          - host: 127.0.0.1
+            port: 5354
+        options:
+          host: 127.0.0.1
+          port: 53
+          rndc_host: 127.0.0.1
+          rndc_port: 953
+          rndc_key_file: /etc/designate/rndc.key
+
+# rndc key for BIND9 authentication
+designate_rndc_keys:
+  - name: "rndc-key"
+    file: /etc/designate/rndc.key
+    algorithm: "hmac-sha256"
+    secret: "HalkP9PWONDtxfSEWsqYqXMxJbnc7JpgPzTUcOmpHkw="
+
+# Neutron DNS integration — auto-create records for instances/ports
+neutron_plugin_base:
+  - ovn-router
+  - dns
+neutron_dns_domain: "home.cloud."

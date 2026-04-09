@@ -656,9 +656,345 @@ The built-in `env.d/manila.yml` mapping handles the split architecture: API/sche
 | **Container** | Bare metal (env.d override) | Bare metal (built-in env.d) |
 | **Client mounts** | Nova attaches via iSCSI | Tenant mounts via NFS |
 
-### Phase 12 - Designate DNS Service
+### Phase 12 — Designate DNS Service
 
-(**Designate**) DNS service [(install guide)](https://docs.openstack.org/designate/2025.1/install/) [(user guide)](https://docs.openstack.org/designate/2025.1/user/) [(dashboard)](https://opendev.org/openstack/designate-dashboard) - `python-designateclient`, `designate-dashboard` or `openstack-designate-ui`
+**Goal:** Deploy the OpenStack DNS-as-a-Service (Designate) so tenants can create and manage DNS zones and records via the API, and optionally auto-create DNS records when Nova instances or Neutron ports are created. Uses BIND9 as the backend nameserver inside the Designate LXC container on cloud-4core.
+
+**Current state:** Designate secrets already generated in `/etc/openstack_deploy/user_secrets.yml` (`designate_galera_password`, `designate_oslomsg_rpc_password`, `designate_service_password`, `designate_pool_uuid`). The `env.d/designate.yml` mapping and HAProxy service definitions ship with OSA. No `dnsaas_hosts` entry exists in `openstack_user_config.yml` yet.
+
+**References:** [install guide](https://docs.openstack.org/designate/2025.1/install/) · [user guide](https://docs.openstack.org/designate/2025.1/user/) · [dashboard](https://opendev.org/openstack/designate-dashboard)
+
+#### Designate Architecture
+
+All Designate services run in a single LXC container on cloud-4core. BIND9 also runs inside that container as the DNS backend, managed by Designate via `rndc`.
+
+```bash
+┌──────────────────────────────────────────────────────────┐
+│  cloud-4core                                             │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ designate_container (LXC)                          │  │
+│  │                                                    │  │
+│  │  designate-api       :9001  (REST API)             │  │
+│  │  designate-central          (zone/record logic)    │  │
+│  │  designate-worker           (async tasks)          │  │
+│  │  designate-producer         (periodic tasks)       │  │
+│  │  designate-mdns      :5354  (zone transfers)       │  │
+│  │  designate-sink             (notification listener)│  │
+│  │                                                    │  │
+│  │  BIND9 (named)       :53   (authoritative DNS)     │  │
+│  │  rndc                :953  (BIND9 control channel) │  │
+│  └────────────────────────────────────────────────────┘  │
+│  HAProxy :9001 → designate container :9001               │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **designate-api** listens on port 9001, fronted by HAProxy with SSL termination
+- **designate-mdns** (mini-DNS) handles AXFR zone transfers to BIND9 on port 5354
+- **designate-worker** sends rndc commands to BIND9 to create/delete zones
+- **designate-sink** listens for Nova/Neutron notifications to auto-create DNS records
+- **BIND9** is the authoritative nameserver — Designate manages its zones via rndc
+- Keystone endpoint registered as service type `dns`
+- Coordination via Zookeeper (already deployed for other services)
+
+#### How it works
+
+1. Tenant creates a zone via API: `openstack zone create --email admin@home.cloud home.cloud.`
+2. Designate stores the zone in Galera and tells designate-worker to provision it
+3. Worker sends an rndc command to BIND9 to create the zone, then designate-mdns does an AXFR transfer of records
+4. Tenant creates records: `openstack recordset create home.cloud. --type A --records 192.168.2.100 myvm`
+5. BIND9 serves the records authoritatively on port 53
+
+#### DNS Backend: BIND9
+
+BIND9 is the simplest backend for a single-node deployment. It runs inside the Designate container, so no additional hosts or network access are needed. The OSA role:
+
+- Installs `bind9utils` (for the `rndc` CLI) when `designate_rndc_keys` is defined
+- Creates the rndc key file from the secret we provide
+- Configures `pools.yaml` with the BIND9 target
+
+**We must install BIND9 (`bind9` package) ourselves** inside the container — the OSA role only installs `bind9utils`, not the server. This is a one-time step after container creation.
+
+#### Implementation Steps
+
+**Step 1 — Add `dnsaas_hosts` to `openstack_user_config.yml.j2`**
+
+Add after `manila-data_hosts`:
+
+```yaml
+# Designate DNS-as-a-Service — all services in LXC
+dnsaas_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+This tells OSA to create a `designate_container` LXC on cloud-4core and assign it to all `designate_*` groups (via the built-in `env.d/designate.yml` mapping).
+
+**Step 2 — Add Designate pool and rndc configuration to `user_variables.yml.j2`**
+
+```yaml
+# ============================================================================
+# Designate (DNS)
+# ============================================================================
+# BIND9 pool configuration — single nameserver in the Designate container
+designate_pools_yaml:
+  - name: "default"
+    description: "Default BIND9 Pool"
+    attributes: {}
+    ns_records:
+      - hostname: "ns1.home.cloud."
+        priority: 1
+    nameservers:
+      - host: 127.0.0.1
+        port: 53
+    targets:
+      - type: bind9
+        description: "BIND9 on cloud-4core"
+        masters:
+          - host: 127.0.0.1
+            port: 5354
+        options:
+          host: 127.0.0.1
+          port: 53
+          rndc_host: 127.0.0.1
+          rndc_port: 953
+          rndc_key_file: /etc/designate/rndc.key
+
+# rndc key for BIND9 authentication — generated once, stored here
+# Generate with: rndc-confgen -a -A hmac-sha256 | grep secret
+designate_rndc_keys:
+  - name: "rndc-key"
+    file: /etc/designate/rndc.key
+    algorithm: "hmac-sha256"
+    secret: "<generate-and-paste-here>"
+
+# Neutron DNS integration — auto-create records for instances/ports
+neutron_plugin_base:
+  - router
+  - dns
+neutron_dns_domain: "home.cloud."
+```
+
+**Note on `neutron_plugin_base`:** OSA's default for OVN is `[router]`. Adding `dns` enables the ML2 DNS extension driver, which adds `dns_name` and `dns_domain` attributes to ports/networks. Combined with `neutron_designate_enabled` (auto-set when `designate_all` group exists), Neutron will call Designate to create A records when instances are created on networks with a `dns_domain` set.
+
+**Step 3 — Deploy updated config**
+
+```bash
+ansible-playbook playbooks/deploy_osa_config.yml --diff
+```
+
+**Step 4 — Create the Designate container**
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/lxc-containers-create.yml --limit designate_all
+```
+
+**Step 5 — Install BIND9 inside the Designate container**
+
+The OSA role only installs `bind9utils` (the rndc CLI), not the BIND9 server. Install it manually after container creation:
+
+```bash
+# Find the container name
+ssh cloud-4core "sudo lxc-ls | grep designate"
+
+# Install and configure BIND9
+ssh cloud-4core "sudo lxc-attach -n <designate-container> -- bash -c '
+  apt-get update && apt-get install -y bind9
+  # Enable dynamic zones (required by Designate worker)
+  cat >> /etc/bind/named.conf.options <<EOF
+
+  // Allow Designate to manage zones via rndc
+  allow-new-zones yes;
+EOF
+  systemctl enable named
+  systemctl restart named
+'"
+```
+
+Alternatively, this could be codified in `run_osa_deploy.yml` as a post-deploy task (similar to the lxc-net fix).
+
+**Step 6 — Generate the rndc key**
+
+```bash
+# Generate an rndc key
+ssh cloud-4core "sudo lxc-attach -n <designate-container> -- bash -c '
+  rndc-confgen -a -A hmac-sha256 -k rndc-key
+  cat /etc/bind/rndc.key
+'"
+```
+
+Copy the `secret` value from the output into `designate_rndc_keys[0].secret` in `user_variables.yml.j2`, then re-deploy config:
+
+```bash
+ansible-playbook playbooks/deploy_osa_config.yml --diff
+```
+
+**Step 7 — Run the Designate install playbook**
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/os-designate-install.yml
+```
+
+This will:
+
+1. Create the `designate` Galera database and user
+2. Create the RabbitMQ vhost and user
+3. Install Designate from source (stable/2025.2) in a venv
+4. Deploy `designate.conf` with BIND9 backend config
+5. Create the rndc key file at `/etc/designate/rndc.key`
+6. Deploy `pools.yaml` and run `designate-manage pool update`
+7. Register the `dns` service and endpoints in Keystone
+8. Configure HAProxy backend for port 9001
+9. Start all 6 Designate services (api, central, worker, mdns, producer, sink)
+
+**Step 8 — Configure BIND9 to accept rndc commands from Designate**
+
+After the OSA playbook creates the rndc key file, configure BIND9 to use it:
+
+```bash
+ssh cloud-4core "sudo lxc-attach -n <designate-container> -- bash -c '
+  # Copy the Designate-managed rndc key to BIND
+  cp /etc/designate/rndc.key /etc/bind/rndc.key
+  chown bind:bind /etc/bind/rndc.key
+
+  # Add rndc controls to named.conf if not present
+  if ! grep -q \"controls\" /etc/bind/named.conf.local; then
+    cat >> /etc/bind/named.conf.local <<EOF
+
+include \"/etc/bind/rndc.key\";
+controls {
+  inet 127.0.0.1 port 953 allow { localhost; } keys { \"rndc-key\"; };
+};
+EOF
+  fi
+
+  systemctl restart named
+
+  # Verify rndc works
+  rndc -k /etc/designate/rndc.key status
+'"
+```
+
+**Step 9 — Re-run Horizon install (for designate-dashboard)**
+
+Horizon auto-enables `designate-dashboard` when `designate_all` group exists (via `horizon_enable_designate_ui` default). No explicit variable needed:
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/os-horizon-install.yml
+```
+
+**Step 10 — Re-run Neutron install (for DNS integration)**
+
+If Neutron DNS integration is desired (auto-creating records for instances), re-run Neutron to pick up the `dns` extension driver and `[designate]` config section:
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/os-neutron-install.yml
+```
+
+**Step 11 — Add python-designateclient to CLI playbook**
+
+Add `python-designateclient` to the packages list in `playbooks/setup_openstack_cli.yml`, then run:
+
+```bash
+ansible-playbook playbooks/setup_openstack_cli.yml
+```
+
+**Step 12 — Verify**
+
+```bash
+# Check service is registered
+openstack --os-cloud home-cloud service list | grep dns
+
+# Check endpoint
+openstack --os-cloud home-cloud endpoint list | grep designate
+
+# Create a test zone
+openstack --os-cloud home-cloud zone create --email admin@home.cloud home.cloud.
+
+# Wait for zone to become ACTIVE
+openstack --os-cloud home-cloud zone show home.cloud.
+
+# Create an A record
+openstack --os-cloud home-cloud recordset create home.cloud. \
+  --type A --records 192.168.2.100 testvm
+
+# Verify record exists
+openstack --os-cloud home-cloud recordset list home.cloud.
+
+# Test DNS resolution from the Designate container
+ssh cloud-4core "sudo lxc-attach -n <designate-container> -- \
+  dig @127.0.0.1 testvm.home.cloud. A +short"
+# Expected: 192.168.2.100
+
+# Test Neutron integration (if enabled):
+# Create a network with dns_domain
+openstack --os-cloud home-cloud network set test-net --dns-domain home.cloud.
+
+# Launch an instance — should auto-create an A record
+# openstack --os-cloud home-cloud server create --nic net-id=test-net ...
+
+# Clean up
+openstack --os-cloud home-cloud recordset delete home.cloud. testvm.home.cloud.
+openstack --os-cloud home-cloud zone delete home.cloud.
+```
+
+#### What OSA handles automatically
+
+- LXC container creation and networking
+- Galera database and user
+- RabbitMQ vhost and user
+- Keystone service catalog registration (service type `dns`, port 9001)
+- HAProxy frontend/backend on VIP port 9001 (SSL-terminated)
+- `designate.conf` with pool config, rndc key path, Zookeeper coordination
+- `pools.yaml` deployment and `designate-manage pool update`
+- Systemd services for all 6 Designate processes
+- Horizon plugin auto-enablement (`designate-dashboard`)
+- Neutron `[designate]` config section and `external_dns_driver = designate` (when `designate_all` group exists)
+
+#### What we must handle manually
+
+- **BIND9 server installation** inside the container (`apt-get install bind9`) — OSA only installs `bind9utils`
+- **BIND9 `named.conf` configuration** — `allow-new-zones yes`, rndc controls, key include
+- **rndc key generation** — `rndc-confgen -a -A hmac-sha256` → paste secret into `user_variables.yml.j2`
+- **Neutron re-run** if DNS integration is desired (to pick up `dns` extension driver)
+
+#### No custom env.d needed
+
+The built-in `env.d/designate.yml` mapping handles everything: all 6 services run inside a single `designate_container` LXC. No bare-metal components needed (unlike Manila or Cinder LVM).
+
+#### Choosing a DNS domain
+
+The zone name (`home.cloud.` in the examples above) is arbitrary. Options:
+
+- **`home.cloud.`** — short, memorable, private-use. Not a real TLD, so no conflict risk.
+- **`openstack.local.`** — explicit about scope, but `.local` is reserved for mDNS (may cause resolution issues on some clients).
+- **A subdomain of a real domain you own** — e.g., `cloud.example.com.` — best practice if you want external resolution later.
+
+The zone only needs to exist inside Designate's BIND9 — it doesn't need to be delegated from any parent zone for internal use. Clients that want to resolve these names just need to point at the Designate BIND9 (cloud-4core container IP) as their DNS server, or use a forwarding rule on the lab router.
+
+```bash
+export LC_ALL=en_US.UTF-8
+export OS_ENDPOINT_TYPE=internalURL
+export OS_INTERFACE=internalURL
+export OS_USERNAME=admin
+export OS_PASSWORD='8319c588aabc24268829e560427a0f33b08f3acb451'
+export OS_PROJECT_NAME=admin
+export OS_TENANT_NAME=admin
+export OS_AUTH_TYPE=password
+export OS_AUTH_URL=https://192.168.50.168:5000/v3
+export OS_NO_CACHE=1
+export OS_USER_DOMAIN_NAME=Default
+export OS_PROJECT_DOMAIN_NAME=Default
+export OS_REGION_NAME=RegionOne
+export OS_IDENTITY_API_VERSION=3
+export OS_AUTH_VERSION=3
+openstack zone list
+```
+
+### Phase 13 — (Octavia) Load-balancer service [(install guide)](https://docs.openstack.org/octavia/2025.1/install/) [(user guide)](https://docs.openstack.org/octavia/2025.1/user/) [(dashboard)](https://opendev.org/openstack/octavia-dashboard) - `python-octaviaclient`, `octavia-dashboard` or  `openstack-octavia-ui`
 
 ### Last Phase
 
