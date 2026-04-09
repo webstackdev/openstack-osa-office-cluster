@@ -6,7 +6,7 @@
 
 ## Contributions
 
-he barbican-ui package is essentially a scaffolding project — the panel group (_90) sets PANEL_GROUP_DASHBOARD = 'barbican', which refers to a top-level dashboard slug barbican that doesn't exist. Normal Horizon plugins register under PANEL_GROUP_DASHBOARD = 'project' to appear in the Project tab. Since there's no barbican dashboard defined, the panel silently goes nowhere.
+The barbican-ui package is essentially a scaffolding project — the panel group (_90) sets PANEL_GROUP_DASHBOARD = 'barbican', which refers to a top-level dashboard slug barbican that doesn't exist. Normal Horizon plugins register under PANEL_GROUP_DASHBOARD = 'project' to appear in the Project tab. Since there's no barbican dashboard defined, the panel silently goes nowhere.
 
 This is consistent with the OSA defaults comment that said barbican-ui "does not provide any functionality at this time" and why horizon_enable_barbican_ui defaults to false. The project has only 13 commits and its README says "Features: TODO".
 
@@ -994,7 +994,371 @@ export OS_AUTH_VERSION=3
 openstack zone list
 ```
 
-### Phase 13 — (Octavia) Load-balancer service [(install guide)](https://docs.openstack.org/octavia/2025.1/install/) [(user guide)](https://docs.openstack.org/octavia/2025.1/user/) [(dashboard)](https://opendev.org/openstack/octavia-dashboard) - `python-octaviaclient`, `octavia-dashboard` or  `openstack-octavia-ui`
+### Phase 13 — (Trove) Database service
+
+#### How Trove works
+
+Trove is DBaaS — it doesn't share the infrastructure MariaDB (Galera) or install databases on the host. Instead, when a tenant creates a database instance, Trove:
+
+1. Launches a **Nova VM** from a pre-built guest image (stored in Glance)
+2. Attaches a **Cinder volume** for persistent data (if `volume_support=True`, which is the default)
+3. Attaches two NICs: one on the **tenant network** (for database client access) and one on a **management network** (for guest agent ↔ RabbitMQ communication)
+4. The guest agent inside the VM pulls a **Docker container image** for the requested database engine (MySQL, MariaDB, PostgreSQL, etc.) from Docker Hub or a private registry
+5. The guest agent manages the database lifecycle (create/delete databases and users, backups, restores, configuration changes) via RPC over RabbitMQ
+
+```
+                          ┌──────────────────── cloud-4core (LXC) ────────────────────┐
+                          │                                                            │
+  Tenant / CLI ──HTTPS──▶│  HAProxy :8779 ──▶ trove-api                               │
+                          │                      │                                     │
+                          │                      ▼ (RPC)                               │
+                          │               trove-conductor  ◄──status── ┐               │
+                          │               trove-taskmanager ──launch──▶│               │
+                          │                      │                     │               │
+                          └──────────────────────┼─────────────────────┼───────────────┘
+                                                 │                     │
+                                 ┌───────────────┘                     │
+                                 ▼                                     │
+                    Nova creates VM on compute node                    │
+                    ┌────────────────────────────────┐                 │
+                    │  Trove Guest VM                 │                 │
+                    │  ┌──────────────────────────┐  │                 │
+                    │  │ trove-guestagent          │──┘ (RabbitMQ      │
+                    │  │   └─▶ Docker: mysql:8.4   │     over mgmt     │
+                    │  └──────────────────────────┘     network)       │
+                    │  NIC1: tenant-net (DB clients)                   │
+                    │  NIC2: mgmt-net (guest agent)                    │
+                    │  Cinder volume: /var/lib/mysql                   │
+                    └────────────────────────────────┘
+```
+
+#### Datastore support (2025.2 Flamingo)
+
+The official Trove support matrix for 2025.2:
+
+| Database   | Supported versions |
+|------------|--------------------|
+| MySQL      | 8.0, 8.4           |
+| MariaDB    | 11.4, 11.8         |
+| PostgreSQL | 16, 17             |
+
+**Redis and MongoDB are NOT in the official 2025.2 support matrix.** Since Victoria, Trove runs databases as Docker containers inside guest VMs. The tested datastore managers are `mysql`, `mariadb`, and `postgresql`. Redis and MongoDB managers exist in the codebase but are unmaintained and untested in CI. Attempting them would require custom work and may break.
+
+**Recommendation:** Deploy MySQL 8.4 and MariaDB 11.4 (or 11.8) as the initial datastores. PostgreSQL 16/17 can be added easily. Redis and MongoDB should be deferred unless you're willing to do significant manual work with no upstream support.
+
+**Decision:** MariaDB and PostgreSQL only. Skip MySQL (MariaDB covers the same use cases). Deploy MariaDB 11.4 and PostgreSQL 17 as the initial datastores.
+
+#### /dev/sdc usage — dedicated Cinder SSD backend (optional)
+
+Since Trove stores database data on Cinder volumes, `/dev/sdc` (128 GB SSD on cloud-4core) can be configured as a **dedicated Cinder LVM backend** for fast database storage. This requires:
+
+- Creating a VG (`trove-volumes`) on `/dev/sdc` on cloud-4core
+- Adding cloud-4core as a second `storage_hosts` entry in `openstack_user_config.yml.j2`
+- Defining a new Cinder volume type (e.g., `ssd-db`) and configuring Trove to use it via `cinder_volume_type`
+- iSCSI traffic flows over `br-storage` from cloud-4core to compute nodes
+
+**Alternative:** Skip /dev/sdc entirely and use the existing Cinder LVM backend on cloud-eugene (`/dev/sde`, HDD). Simpler, but slower storage. /dev/sdc can be reserved for future Zaqar or other uses.
+
+**Decision:** Skip /dev/sdc — reserve it for Zaqar in a future phase. Use the existing Cinder LVM backend on cloud-eugene (`/dev/sde`) as the sole Cinder volume host for Trove database instances.
+
+#### Management network design
+
+Trove guest VMs need a Neutron network for management traffic (guest agent ↔ RabbitMQ). Options:
+
+1. **Overlay network + router** (recommended for home lab): Create a Geneve-backed Neutron network (`dbaas_mgmt_net`, e.g., 172.29.252.0/24) and a router connecting it to a network that can reach the RabbitMQ hosts (192.168.50.x). The router provides NAT/routing between the management subnet and the control plane. This isolates Trove VMs from the control plane.
+
+2. **Provider flat network on br-mgmt**: Map a new physnet to `br-mgmt` and create a provider network directly on the management subnet. Simplest, but puts guest VMs on the control plane network. Acceptable for a home lab with no untrusted tenants.
+
+The OSA role uses `trove_provider_net_name: dbaas-mgmt` to resolve RabbitMQ addresses for the guest agent config. A matching `provider_networks` entry with `net_name: dbaas-mgmt` must exist in `openstack_user_config.yml.j2`. For the overlay approach, this entry can reuse `br-mgmt` (the RabbitMQ containers are on that bridge), and the actual Neutron `management_networks` UUID is set separately.
+
+**Decision:** Use the overlay network + OVN router approach. Create a Geneve-backed `dbaas-mgmt-net` (172.29.252.0/24) with an OVN logical router providing NAT/routing to the control plane (192.168.50.x) for guest-agent ↔ RabbitMQ traffic. This keeps Trove VMs isolated from the control plane network.
+
+#### Implementation steps
+
+**Step 1 — Add dbaas-mgmt provider network entry to openstack_user_config.yml.j2**
+
+Add a provider network entry so OSA can resolve RabbitMQ addresses for the Trove guest agent config. This goes in `global_overrides.provider_networks`:
+
+```yaml
+    - network:
+        container_bridge: "br-mgmt"
+        container_type: "veth"
+        container_interface: "eth13"
+        ip_from_q: "management"
+        type: "flat"
+        net_name: "dbaas-mgmt"
+        group_binds:
+          - trove_api
+```
+
+**Step 2 — Add trove-infra_hosts to openstack_user_config.yml.j2**
+
+```yaml
+# Trove Database-as-a-Service — all services in LXC
+trove-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+**Step 3 — Skipped** (no dedicated SSD backend — /dev/sdc reserved for Zaqar)
+
+Trove instances will use the existing Cinder LVM backend on cloud-eugene (`/dev/sde`).
+
+**Step 4 — Add Trove variables to user_variables.yml.j2**
+
+```yaml
+# ============================================================================
+# Trove (Database as a Service)
+# ============================================================================
+# Datastore definitions — MySQL 8.4 and MariaDB 11.4
+trove_datastores:
+  mariadb:
+    - name: MariaDB
+      versions:
+        - name: "11.4"
+          enabled: true
+          version-number: "11.4"
+          default: true
+  postgresql:
+    - name: PostgreSQL
+      versions:
+        - name: "17"
+          enabled: true
+          version-number: "17"
+          default: true
+
+# Horizon auto-enables trove-dashboard when trove_all group exists
+```
+
+**Step 5 — Deploy the updated OSA config**
+
+```bash
+ansible-playbook playbooks/deploy_osa_config.yml --diff
+```
+
+**Step 6 — Build the Trove guest image**
+
+Build a single guest image (works for all datastores since Victoria). On the deployment host or cloud-4core:
+
+```bash
+git clone --branch stable/2025.2 https://opendev.org/openstack/trove /tmp/trove-build
+cd /tmp/trove-build/integration/scripts
+
+# Build for Ubuntu Jammy (officially supported), production mode
+./trovestack build-image ubuntu jammy false ubuntu ~/images/trove-guest-ubuntu-jammy.qcow2
+```
+
+Register in Glance:
+
+```bash
+openstack --os-cloud home-cloud image create trove-guest-ubuntu-jammy \
+  --private \
+  --disk-format qcow2 --container-format bare \
+  --property hw_rng_model='virtio' \
+  --tag trove --tag mariadb --tag postgresql \
+  --file ~/images/trove-guest-ubuntu-jammy.qcow2
+```
+
+> **Note:** Pre-built images may be available at `http://tarballs.openstack.org/trove/images/` for testing, but production deployments should use custom-built images.
+
+**Step 7 — Run the Trove install playbook**
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/os-trove-install.yml
+```
+
+This will:
+
+1. Create an LXC container on cloud-4core for Trove services
+2. Create the `trove` Galera database and user
+3. Create the RabbitMQ vhost and user (with secure RPC encryption keys)
+4. Install Trove from source (stable/2025.2) in a venv
+5. Deploy `trove.conf` and `trove-guestagent.conf`
+6. Register the `database` service and endpoints in Keystone (port 8779)
+7. Configure HAProxy backend for port 8779
+8. Register datastores and versions (from `trove_datastores`)
+9. Upload guest image to Glance (from `trove_guestagent_images` if configured)
+10. Start trove-api (uWSGI), trove-conductor, trove-taskmanager
+
+**Step 8 — Create the Trove management network**
+
+Create a Neutron network for Trove management traffic. This is the network whose UUID goes into `management_networks` in trove.conf.
+
+Option A — Overlay with router (recommended):
+
+```bash
+# Create management network (admin-only, not shared)
+openstack --os-cloud home-cloud network create dbaas-mgmt-net \
+  --provider-network-type geneve \
+  --no-share
+
+openstack --os-cloud home-cloud subnet create dbaas-mgmt-subnet \
+  --network dbaas-mgmt-net \
+  --subnet-range 172.29.252.0/24 \
+  --no-dhcp  # Trove manages port creation directly
+
+# Create a router to provide connectivity to RabbitMQ (on management network)
+openstack --os-cloud home-cloud router create dbaas-router
+openstack --os-cloud home-cloud router add subnet dbaas-router dbaas-mgmt-subnet
+# Connect router to provider-net or external gateway so traffic can reach 192.168.50.x
+openstack --os-cloud home-cloud router set dbaas-router --external-gateway provider-net
+```
+
+Then configure Trove to use this network:
+
+```bash
+MGMT_NET_ID=$(openstack --os-cloud home-cloud network show dbaas-mgmt-net -f value -c id)
+# Update trove.conf: management_networks = $MGMT_NET_ID
+# This can be done via trove_config_overrides in user_variables.yml.j2:
+```
+
+Add to `user_variables.yml.j2`:
+
+```yaml
+trove_config_overrides:
+  DEFAULT:
+    management_networks: "<MGMT_NET_UUID>"
+```
+
+Then re-run `os-trove-install.yml` to apply.
+
+**Step 9 — Create management security group**
+
+```bash
+openstack --os-cloud home-cloud security group create trove-mgmt-sg \
+  --project service \
+  --description "Trove management port - allow egress only"
+
+# Allow SSH from control plane (for troubleshooting, optional)
+openstack --os-cloud home-cloud security group rule create trove-mgmt-sg \
+  --protocol tcp --dst-port 22 --remote-ip 192.168.50.0/24
+
+MGMT_SG_ID=$(openstack --os-cloud home-cloud security group show trove-mgmt-sg -f value -c id)
+```
+
+Add to `trove_config_overrides`:
+
+```yaml
+trove_config_overrides:
+  DEFAULT:
+    management_networks: "<MGMT_NET_UUID>"
+    management_security_groups: "<MGMT_SG_UUID>"
+```
+
+**Step 10 — Re-run Horizon install (for trove-dashboard)**
+
+Horizon auto-enables `trove-dashboard` when the `trove_all` group exists:
+
+```bash
+cd /opt/openstack-ansible
+openstack-ansible playbooks/os-horizon-install.yml
+```
+
+**Step 11 — Add python-troveclient to CLI playbook**
+
+Add `python-troveclient` to the packages list in `playbooks/setup_openstack_cli.yml`, then run:
+
+```bash
+ansible-playbook playbooks/setup_openstack_cli.yml
+```
+
+**Step 12 — Set Trove quotas for the service project**
+
+Trove creates Nova VMs, Cinder volumes, and Neutron ports in the `service` project. Ensure it has sufficient quota:
+
+```bash
+openstack --os-cloud home-cloud quota set service \
+  --instances 20 \
+  --server-groups 20 \
+  --volumes 20 \
+  --secgroups 20 \
+  --ports 40
+```
+
+**Step 13 — Verify**
+
+```bash
+# Check service is registered
+openstack --os-cloud home-cloud service list | grep database
+
+# Check endpoint
+openstack --os-cloud home-cloud endpoint list | grep trove
+
+# List datastores
+openstack --os-cloud home-cloud datastore list
+openstack --os-cloud home-cloud datastore version list MariaDB
+openstack --os-cloud home-cloud datastore version list PostgreSQL
+
+# Check guest image
+openstack --os-cloud home-cloud image list --tag trove
+
+# Create a test MariaDB instance
+openstack --os-cloud home-cloud database instance create test-mariadb \
+  --flavor m1.small \
+  --size 5 \
+  --datastore MariaDB --datastore-version 11.4 \
+  --nic net-id=<tenant-network-id> \
+  --databases testdb \
+  --users testuser:password123
+
+# Wait for ACTIVE status
+openstack --os-cloud home-cloud database instance list
+openstack --os-cloud home-cloud database instance show test-mariadb
+
+# Verify database connectivity
+openstack --os-cloud home-cloud database instance show test-mariadb -c ip
+mariadb -h <instance-ip> -u testuser -p testdb
+
+# Create a test PostgreSQL instance
+openstack --os-cloud home-cloud database instance create test-pg \
+  --flavor m1.small \
+  --size 5 \
+  --datastore PostgreSQL --datastore-version 17 \
+  --nic net-id=<tenant-network-id> \
+  --databases testdb \
+  --users testuser:password123
+
+# Verify PostgreSQL connectivity
+openstack --os-cloud home-cloud database instance show test-pg -c ip
+psql -h <instance-ip> -U testuser testdb
+
+# List databases
+openstack --os-cloud home-cloud database db list test-mariadb
+openstack --os-cloud home-cloud database db list test-pg
+
+# Clean up
+openstack --os-cloud home-cloud database instance delete test-mariadb
+openstack --os-cloud home-cloud database instance delete test-pg
+```
+
+#### What OSA handles automatically
+
+- LXC container creation and networking
+- Galera database (`trove`) and user
+- RabbitMQ vhost and user (with per-service encryption keys)
+- Keystone service catalog registration (service type `database`, port 8779)
+- HAProxy frontend/backend on VIP port 8779 (SSL-terminated)
+- `trove.conf` with database, messaging, Keystone auth, memcached, Cinder/Swift/Designate integration flags
+- `trove-guestagent.conf` (injected into VMs at launch) with RabbitMQ addresses resolved from the `dbaas-mgmt` provider network interface
+- Secure RPC messaging keys (auto-generated)
+- Datastore and datastore version registration (from `trove_datastores`)
+- Systemd services: trove-api (uWSGI), trove-conductor, trove-taskmanager
+- Horizon plugin auto-enablement (`trove-dashboard`)
+
+#### What we must handle manually
+
+- **dbaas-mgmt provider network entry** in `openstack_user_config.yml.j2` — OSA needs this to resolve RabbitMQ addresses for guest agent config
+- **Trove guest image** — build with `trovestack` and upload to Glance with appropriate tags
+- **Management Neutron network** — create with `openstack network create` and set UUID in `trove_config_overrides`
+- **Management security group** — create and set UUID in `trove_config_overrides`
+- ~~**Cinder volume type**~~ — skipped, using existing LVM backend on cloud-eugene
+- **Service project quotas** — ensure the `service` project can create enough VMs/volumes/ports
+- **Routing/connectivity** — ensure the management network can reach RabbitMQ (via router or provider network)
+
+#### No custom env.d needed
+
+The built-in `env.d/trove.yml` mapping handles everything: trove-api, trove-conductor, and trove-taskmanager all run inside a single `trove_api_container` LXC on cloud-4core.
 
 ### Last Phase
 

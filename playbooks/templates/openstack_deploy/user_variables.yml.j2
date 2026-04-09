@@ -182,3 +182,37 @@ neutron_plugin_base:
   - ovn-router
   - dns
 neutron_dns_domain: "home.cloud."
+
+# ============================================================================
+# Trove (Database as a Service)
+# ============================================================================
+# Guest agent RabbitMQ addresses — override the default provider-network
+# lookup since we don't have a separate dbaas-mgmt bridge. RabbitMQ is on
+# cloud-4core's management IP.
+trove_guest_oslomsg_rpc_servers: "192.168.50.168"
+trove_guest_oslomsg_notify_servers: "192.168.50.168"
+# Skip the provider network interface lookup — RabbitMQ is on eth1 (br-mgmt)
+trove_provider_net_iface: "eth1"
+
+# Management network + security group for guest agent ↔ RabbitMQ traffic
+trove_config_overrides:
+  DEFAULT:
+    management_networks: "95bbef9f-c2e5-493d-a669-b2f928c933af"
+    management_security_groups: "e86996f0-5e99-4269-8784-832ace5e1c3f"
+
+# Datastore definitions — MariaDB 11.4 and PostgreSQL 17
+trove_datastores:
+  mariadb:
+    - name: MariaDB
+      versions:
+        - name: "11.4"
+          enabled: true
+          version-number: "11.4"
+          default: true
+  postgresql:
+    - name: PostgreSQL
+      versions:
+        - name: "17"
+          enabled: true
+          version-number: "17"
+          default: true

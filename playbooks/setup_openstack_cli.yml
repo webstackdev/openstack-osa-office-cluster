@@ -18,6 +18,7 @@
       - python-barbicanclient
       - python-manilaclient
       - python-designateclient
+      - python-troveclient
       - osc-placement
 
   tasks:
