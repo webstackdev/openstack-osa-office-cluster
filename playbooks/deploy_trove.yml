@@ -1,15 +1,104 @@
 ---
 # Trove (Database as a Service) — post-install resource setup
 #
-# Handles the Neutron management network, security group, datastore
-# registration, and service-project quotas that OSA does NOT automate.
+# Creates the flat provider network on mgmtnet (br-mgmt) for guest-agent ↔
+# RabbitMQ communication, security group, datastore registration, and
+# service-project quotas that OSA does NOT automate.
+#
+# Also ensures compute nodes have a veth pair bridging the OVS br-mgmt
+# (created by OVN for the mgmtnet bridge mapping) to the Linux br-mgmt
+# (managed by NetworkManager), so flat provider traffic reaches the
+# physical network.
 #
 # Prerequisites:
 #   - OSA Trove install playbook has completed (os-trove-install.yml)
+#   - OSA Neutron install has run with mgmtnet bridge mapping
 #   - openstack CLI with python-troveclient is installed
 #
 # Usage: ansible-playbook playbooks/deploy_trove.yml
 
+# ==================================================================
+# Play 1: Bridge OVS br-mgmt ↔ Linux br-mgmt on compute nodes
+# ==================================================================
+# OVN creates an OVS bridge named "br-mgmt" for the mgmtnet:br-mgmt
+# bridge mapping, but NetworkManager already owns a Linux bridge with
+# the same name.  They are separate entities — a veth pair connects
+# them so flat provider network traffic can reach the physical network.
+- name: Ensure OVS-to-Linux br-mgmt bridge connectivity
+  hosts: compute
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check if OVS br-mgmt bridge exists
+      ansible.builtin.command: ovs-vsctl br-exists br-mgmt
+      register: _ovs_br_mgmt
+      changed_when: false
+      failed_when: false
+
+    - name: Deploy ovs-mgmt-veth systemd service
+      when: _ovs_br_mgmt.rc == 0
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/ovs-mgmt-veth.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Create veth pair bridging OVS br-mgmt to Linux br-mgmt
+          After=openvswitch-switch.service NetworkManager.service
+          Wants=openvswitch-switch.service
+          ConditionPathExists=/run/openvswitch/db.sock
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/bash -c '\
+            ip link show veth-mgmt-ovs >/dev/null 2>&1 || \
+              ip link add veth-mgmt-ovs type veth peer name veth-mgmt-lnx; \
+            ovs-vsctl --may-exist add-port br-mgmt veth-mgmt-ovs; \
+            ip link set veth-mgmt-lnx master br-mgmt 2>/dev/null || true; \
+            ip link set veth-mgmt-ovs up; \
+            ip link set veth-mgmt-lnx up'
+          ExecStop=/sbin/ip link delete veth-mgmt-ovs
+
+          [Install]
+          WantedBy=multi-user.target
+      register: _veth_service_file
+
+    - name: Enable and start ovs-mgmt-veth service
+      when: _ovs_br_mgmt.rc == 0
+      ansible.builtin.systemd:
+        name: ovs-mgmt-veth.service
+        enabled: true
+        state: started
+        daemon_reload: "{{ _veth_service_file.changed | default(false) }}"
+
+    - name: Check if veth-mgmt-ovs already exists
+      ansible.builtin.command: ip link show veth-mgmt-ovs
+      register: _veth_exists
+      changed_when: false
+      failed_when: false
+
+    - name: Create veth pair immediately (if not present)
+      when: _ovs_br_mgmt.rc == 0 and _veth_exists.rc != 0
+      block:
+        - name: Create veth pair interfaces
+          ansible.builtin.command: ip link add veth-mgmt-ovs type veth peer name veth-mgmt-lnx
+
+        - name: Add OVS end to OVS br-mgmt
+          ansible.builtin.command: ovs-vsctl --may-exist add-port br-mgmt veth-mgmt-ovs
+
+        - name: Add Linux end to Linux br-mgmt
+          ansible.builtin.command: ip link set veth-mgmt-lnx master br-mgmt
+
+        - name: Bring up veth-mgmt-ovs
+          ansible.builtin.command: ip link set veth-mgmt-ovs up
+
+        - name: Bring up veth-mgmt-lnx
+          ansible.builtin.command: ip link set veth-mgmt-lnx up
+
+# ==================================================================
+# Play 2: Create Trove management OpenStack resources
+# ==================================================================
 - name: Deploy Trove management resources
   hosts: localhost
   connection: local
@@ -18,13 +107,15 @@
 
   vars:
     os_cloud: home-cloud
-    # Management network for guest-agent ↔ RabbitMQ traffic (Geneve overlay)
+    # Flat provider network on mgmtnet (br-mgmt) for guest-agent ↔ RabbitMQ
     trove_mgmt_net_name: dbaas_service_net
-    trove_mgmt_subnet_name: dbaas_subnet
-    trove_mgmt_subnet_cidr: "172.29.252.0/24"
-    trove_mgmt_router_name: dbaas-router
+    trove_mgmt_subnet_name: dbaas_service_subnet
+    trove_mgmt_subnet_cidr: "192.168.50.0/24"
+    trove_mgmt_subnet_pool_start: "192.168.50.241"
+    trove_mgmt_subnet_pool_end: "192.168.50.249"
+    trove_mgmt_subnet_gateway: "192.168.50.1"
+    trove_mgmt_subnet_dns: "192.168.50.1"
     trove_mgmt_sg_name: trove-mgmt-sg
-    trove_external_network: provider-net
     # Datastores to register
     trove_datastores:
       - version_name: "11.4"
@@ -38,7 +129,7 @@
 
   tasks:
     # ------------------------------------------------------------------
-    # Management network (Geneve overlay + OVN router)
+    # Management network (flat provider on mgmtnet / br-mgmt)
     # ------------------------------------------------------------------
     - name: Check if management network exists
       ansible.builtin.command:
@@ -47,12 +138,13 @@
       changed_when: false
       failed_when: false
 
-    - name: Create management network
+    - name: Create management network (flat provider on mgmtnet)
       when: _mgmt_net.rc != 0
       ansible.builtin.command:
         cmd: >-
           openstack --os-cloud {{ os_cloud }} network create {{ trove_mgmt_net_name }}
-          --provider-network-type geneve --no-share
+          --provider-network-type flat --provider-physical-network mgmtnet
+          --no-share
       register: _mgmt_net_create
       changed_when: _mgmt_net_create.rc == 0
 
@@ -76,34 +168,12 @@
           openstack --os-cloud {{ os_cloud }} subnet create {{ trove_mgmt_subnet_name }}
           --network {{ trove_mgmt_net_name }}
           --subnet-range {{ trove_mgmt_subnet_cidr }}
+          --gateway {{ trove_mgmt_subnet_gateway }}
+          --allocation-pool start={{ trove_mgmt_subnet_pool_start }},end={{ trove_mgmt_subnet_pool_end }}
+          --dns-nameserver {{ trove_mgmt_subnet_dns }}
           --dhcp
       register: _mgmt_subnet_create
       changed_when: _mgmt_subnet_create.rc == 0
-
-    - name: Check if management router exists
-      ansible.builtin.command:
-        cmd: openstack --os-cloud {{ os_cloud }} router show {{ trove_mgmt_router_name }} -f value -c id
-      register: _mgmt_router
-      changed_when: false
-      failed_when: false
-
-    - name: Create management router
-      when: _mgmt_router.rc != 0
-      block:
-        - name: Create router
-          ansible.builtin.command:
-            cmd: openstack --os-cloud {{ os_cloud }} router create {{ trove_mgmt_router_name }}
-          changed_when: true
-
-        - name: Add subnet to router
-          ansible.builtin.command:
-            cmd: openstack --os-cloud {{ os_cloud }} router add subnet {{ trove_mgmt_router_name }} {{ trove_mgmt_subnet_name }}
-          changed_when: true
-
-        - name: Set external gateway on router
-          ansible.builtin.command:
-            cmd: openstack --os-cloud {{ os_cloud }} router set {{ trove_mgmt_router_name }} --external-gateway {{ trove_external_network }}
-          changed_when: true
 
     # ------------------------------------------------------------------
     # Management security group
@@ -126,7 +196,7 @@
               --description "Trove management port - allow egress + SSH from control plane"
           changed_when: true
 
-        - name: Allow SSH from control plane
+        - name: Allow SSH from management network
           ansible.builtin.command:
             cmd: >-
               openstack --os-cloud {{ os_cloud }} security group rule create {{ trove_mgmt_sg_name }}

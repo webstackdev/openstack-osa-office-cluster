@@ -1360,6 +1360,11 @@ openstack --os-cloud home-cloud database instance delete test-pg
 
 The built-in `env.d/trove.yml` mapping handles everything: trove-api, trove-conductor, and trove-taskmanager all run inside a single `trove_api_container` LXC on cloud-4core.
 
+### Phase 14 — Zaqar Messaging Service
+
+[(install guide)](https://docs.openstack.org/zaqar/2025.1/install/) [(user guide)](https://docs.openstack.org/zaqar/2025.1/user/) [(dashboard)](https://opendev.org/openstack/zaqar-ui) - uses MongoDB for backing. Similar to AWS SQS (Simple Queue Service). - `python-zaqarclient`, `zaqar-ui`
+cloud-4core /dev/sdc
+
 ### Last Phase
 
 Multi-tenancy with separate projects/users
@@ -1456,3 +1461,106 @@ Control plane VMs. The Octavia load balancer sits in front of the Kubernetes API
 Worker nodes don't run kube-apiserver, so they're not behind the LB. Workers connect to the LB as clients (kubelet → LB VIP → kube-apiserver).
 
 With a single control plane node (your likely lab setup), the LB is redundant — kubectl can just point directly at that one node's IP, which is why master_lb_enabled: false works for single-master clusters.
+
+---
+
+## Session Notes — Phase 13 (Trove) Implementation Status
+
+*Last updated: 2026-04-10*
+
+### What was completed
+
+All Phase 13 steps through Step 13 (verify) are done, with significant deviations from the original plan documented below. A test MariaDB instance was created and is in BUILD state.
+
+**Config changes committed to repo (not yet git-committed):**
+
+- `openstack_user_config.yml.j2`: Added `trove-infra_hosts` (cloud-4core). Added `mgmtnet` provider network entry on `br-mgmt` (flat, `is_management_address: true`, `group_binds: [neutron_ovn_controller]`). Added `used_ips` reservation for 192.168.50.241–249.
+- `user_variables.yml.j2`: **Removed** `neutron_provider_networks` override entirely (was causing missing `network_mappings` — see pitfall below). Added `nova_metadata_protocol: http`. Added full Trove section with bug workarounds (see below). Added `trove_datastores` dict (informational only — OSA doesn't use it, registration is manual).
+- `setup_openstack_cli.yml`: Added `python-troveclient`.
+- `deploy_trove.yml`: Created but **still has OLD geneve+router logic — needs update** for flat provider network.
+
+**OSA playbooks run:**
+
+- `os-trove-install.yml` (multiple times, last run: changed=3)
+- `os-horizon-install.yml` (trove-dashboard enabled)
+- `os-neutron-install.yml` (full run to pick up mgmtnet bridge mappings)
+- `os-neutron-install.yml --limit neutron_ovn_controller` (metadata protocol fix on compute nodes)
+
+**Manual OpenStack resources created:**
+
+| Resource | Name | UUID | Notes |
+|----------|------|------|-------|
+| Network | dbaas_service_net | `c1c43d25-4bc2-4f13-9f37-69e9f58dab9a` | Flat provider on mgmtnet (br-mgmt) |
+| Subnet | dbaas_service_subnet | `c8e5b471-...` | 192.168.50.0/24, DHCP pool .241–.249, dns_nameservers: 192.168.50.1 |
+| Security Group | trove-mgmt-sg | `e86996f0-5e99-4269-8784-832ace5e1c3f` | In service project |
+| Image | trove-guest-ubuntu-noble | `8a1c6efc-9504-4c6e-b6f1-af45cb2a2ce5` | Tags: trove, mariadb, postgresql |
+| Flavor | m1.small | `5a3e284f-...` | 1 vCPU, 2GB RAM, 20GB disk |
+| Datastore ver | MariaDB 11.4 | `e148a482-...` | — |
+| Datastore ver | PostgreSQL 17 | — | — |
+
+**Deleted resources (old approach):**
+
+- Geneve dbaas_service_net (`95bbef9f`) — replaced by flat provider
+- dbaas-router (`efe21df6`) — no longer needed
+
+### Major deviation: Network redesign (geneve → flat on br-mgmt)
+
+The original plan used a geneve overlay network + OVN logical router for Trove management traffic. This **did not work** because:
+
+1. The dbaas-router's external gateway pointed to `provider-net` (physnet1/br-vlan, 192.168.2.0/24).
+2. **All compute node provider NICs are physically DOWN** (NO-CARRIER) — cables not connected.
+3. OVN sends external traffic through gateway chassis (which are the compute nodes), so even adding a static route/DNAT on cloud-4core's br-vlan didn't help — the traffic never left the compute node.
+4. Guest VMs therefore couldn't reach RabbitMQ at 192.168.50.82 on br-mgmt.
+
+**Solution:** Changed dbaas_service_net to a **flat provider network on `mgmtnet:br-mgmt`**, giving guest VMs direct L2 connectivity to RabbitMQ. This required:
+
+- Adding a `mgmtnet` provider network entry in `openstack_user_config.yml.j2` with `is_management_address: true` (required by OSA validation for any network on the management bridge; safe because no `ip_from_q` means it doesn't allocate new IPs).
+- Removing the `neutron_provider_networks` override in `user_variables.yml.j2` (see pitfall below).
+- Re-running `os-neutron-install.yml` to update bridge mappings on all compute nodes.
+- All 3 compute nodes now have: `bridge_mappings = mgmtnet:br-mgmt,physnet1:eth12`
+
+### Pitfall: neutron_provider_networks override
+
+The `user_variables.yml.j2` had a `neutron_provider_networks` dict override (for `network_flat_networks`). This caused the `openstack.osa.provider_networks` Ansible module to be **completely skipped** (its `when:` condition checks `neutron_provider_networks is not defined`). The override was missing `network_mappings`, so OVN bridge mappings were never updated when the mgmtnet entry was added. **Fix:** Remove the override entirely and let the module auto-generate all values from `provider_networks` entries.
+
+### Four Trove bugs and workarounds
+
+All set in `trove_config_overrides` in `user_variables.yml.j2`:
+
+1. **`cinder_service_type`**: Code does `CONF.cinder_service_type.split('v')[-1]` to extract API version. With the default `block-storage`, there's no `v` to split on, causing version lookup failure. **Fix:** `cinder_service_type: "volumev3"` — splits to `'3'`, keystoneauth aliases back to block-storage endpoint.
+
+2. **`dns_driver`**: Class `trove.dns.designate.driver.DesignateDriver` was renamed to `DesignateDriverV2` in 2025.2. **Fix:** `dns_driver: "trove.dns.designate.driver.DesignateDriverV2"`.
+
+3. **`trove_dns_support`**: Even with the driver fix, DNS auth fails because `dns_account_id = service` (project name) is passed as `project_id` → HTTP 401. **Fix:** `trove_dns_support: "False"` (disables Designate integration entirely).
+
+4. **`nova_metadata_protocol`**: Inherited `https` from global `openstack_service_internaluri_proto`, but the Nova metadata HAProxy frontend (port 8775) is plain HTTP → 503 errors for ALL VMs (not just Trove). **Fix:** `nova_metadata_protocol: http` in user_variables.yml.j2, then re-run Neutron on all compute nodes.
+
+### Current state: test-mariadb deleted, ready to re-test
+
+The original test-mariadb instance (Trove ID `4eb28c31`) timed out and went to ERROR. Root cause was **two problems**:
+
+1. **OVS ↔ Linux bridge disconnect.** OVN creates an OVS bridge named `br-mgmt` (for the `mgmtnet:br-mgmt` mapping), but NetworkManager already owns a Linux bridge with the same name. They are separate entities — the VM's tap port was patched into OVS br-mgmt which had no path to the physical network. **Fix:** A veth pair (`veth-mgmt-ovs` ↔ `veth-mgmt-lnx`) connects the two bridges. Deployed as a systemd oneshot service (`ovs-mgmt-veth.service`) on all 3 compute nodes via `deploy_trove.yml` Play 1.
+
+2. **Management NIC not configured.** Trove wasn't using config drive, so cloud-init only configured the primary NIC (ens3/test-net) via metadata service. The management NIC (ens4/dbaas_service_net) was left unconfigured — no IP, no link. **Fix:** Added `use_nova_server_config_drive: "True"` to `trove_config_overrides` in `user_variables.yml.j2`, re-ran `os-trove-install.yml`.
+
+Both the console log and the "Docker DNS timeout" error from the earlier attempt were consequences of ens4 having no IP — the guest agent couldn't reach RabbitMQ at all (the previous "successful AMQP" observation was from a different earlier instance that had different networking).
+
+**Cleanup done:**
+- Deleted test-mariadb instance (`openstack database instance delete --force`)
+- Removed `192.168.2.50/24` from cloud-4core br-vlan
+- Removed iptables DNAT/MASQUERADE rules from cloud-4core
+
+**Files updated:**
+- `deploy_trove.yml` — Rewritten: Play 1 deploys veth bridge on compute nodes, Play 2 creates flat provider network (not geneve), no router. Fully idempotent.
+- `user_variables.yml.j2` — Added `use_nova_server_config_drive: "True"` to `trove_config_overrides`.
+
+### Fifth bug: OVS ↔ Linux br-mgmt bridge disconnect
+
+The `mgmtnet:br-mgmt` bridge mapping causes OVN to create an OVS bridge called `br-mgmt`. On these nodes, NetworkManager already manages a Linux bridge with the same name. OVS cannot create its internal port (error: "could not add network device br-mgmt to ofproto (File exists)"). A veth pair is needed to connect them. This is handled by `deploy_trove.yml` Play 1 and persisted via `ovs-mgmt-veth.service`.
+
+### TODO on resume
+
+1. **Create a new test-mariadb** and verify it reaches ACTIVE status with guest agent reporting back.
+2. **Test database connectivity** — connect to the MariaDB instance from a client.
+3. **Update Phase 13 steps above** — Steps 8–13 still describe the original geneve approach. Rewrite to match flat provider implementation.
+4. **Git commit** all changes.
