@@ -56,7 +56,7 @@ Three free drives to be used for Glance image service, for Manila NFS, and for T
 
 ```bash
 sda    128G     SSD disk (Glance)
-sdb    931.5G   HDD disk (Manila)
+sdb    931.5G   HDD disk (Manila - LVM)
 sdc    128G     SSD disk (MongoDB)
 sdd    119.2G   SSD disk (Root FS)
 ```

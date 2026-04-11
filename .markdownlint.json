@@ -8,8 +8,7 @@
   "MD035": false,
   "MD036": false,
   "MD041": false,
-  "MD049": {
-    "style": "underscore"
-  },
-  "MD053": false
+  "MD049": false,
+  "MD053": false,
+  "MD060": false
 }
