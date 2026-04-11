@@ -7,6 +7,7 @@ cidr_networks:
   management: 192.168.50.0/24
   tunnel: 192.168.60.0/24
   storage: 192.168.70.0/24
+  lbaas: 172.29.232.0/22
 
 used_ips:
   # Management network (192.168.50.0/24)
@@ -30,6 +31,8 @@ used_ips:
   - "192.168.70.11"
   - "192.168.70.12"
   - "192.168.70.13"
+  # Octavia lbaas management network (172.29.232.0/22)
+  - "172.29.232.0,172.29.232.9"
 
 internal_lb_vip_address: 192.168.50.168
 external_lb_vip_address: 192.168.50.168
@@ -95,6 +98,22 @@ global_overrides:
           - cinder_volume
           - nova_compute
           - swift_proxy
+    # Octavia amphora management network — VLAN 232 on the storage bridge.
+    # cloud-4core has no OVS; a Linux br-lbaas with VLAN sub-interface
+    # (br-storage.232) provides L2 to compute nodes via the storage hub.
+    # On compute nodes, OVN adds lbaas:br-storage to ovn-bridge-mappings.
+    - network:
+        container_bridge: "br-lbaas"
+        container_type: "veth"
+        container_interface: "eth14"
+        host_bind_override: "br-storage"
+        ip_from_q: "lbaas"
+        type: "vlan"
+        range: "232:232"
+        net_name: "lbaas"
+        group_binds:
+          - neutron_ovn_controller
+          - octavia_all
 
 # ============================================================================
 # Host assignments
@@ -206,5 +225,10 @@ dnsaas_hosts:
 
 # Trove Database-as-a-Service — all services in LXC
 trove-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Octavia Load Balancer — all services in single LXC container
+octavia-infra_hosts:
   cloud-4core:
     ip: 192.168.50.168

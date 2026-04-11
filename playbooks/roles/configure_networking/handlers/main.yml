@@ -3,3 +3,10 @@
   ansible.builtin.systemd:
     name: NetworkManager
     state: reloaded
+
+- name: Enable octavia-veth-bridge service
+  ansible.builtin.systemd:
+    name: octavia-veth-bridge.service
+    enabled: true
+    daemon_reload: true
+    state: started

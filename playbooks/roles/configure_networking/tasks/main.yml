@@ -118,3 +118,88 @@
     - br-storage
     - br-vlan
   changed_when: false
+
+# --- Octavia lbaas management network (VLAN 232 on br-storage) ---
+# Controller: br-lbaas Linux bridge with br-storage.232 VLAN sub-interface.
+# Compute nodes: OVS bridge br-storage + veth pair connecting OVS to
+# the Linux br-storage, so OVN can send VLAN 232 tagged amphora traffic
+# through the storage hub to the controller.
+
+- name: Create br-lbaas bridge on controller
+  ansible.builtin.command: >
+    nmcli connection add type bridge con-name br-lbaas ifname br-lbaas
+    ipv4.method disabled ipv6.method disabled
+    bridge.stp no bridge.forward-delay 0
+    connection.autoconnect yes
+  when:
+    - is_controller | default(false)
+    - "'br-lbaas' not in configure_networking_nm_connections.stdout"
+  changed_when: true
+
+- name: Create br-storage.232 VLAN sub-interface on controller
+  ansible.builtin.command: >
+    nmcli connection add type vlan con-name br-storage.232
+    dev br-storage id 232
+    master br-lbaas slave-type bridge
+    connection.autoconnect yes
+  when:
+    - is_controller | default(false)
+    - "'br-storage.232' not in configure_networking_nm_connections.stdout"
+  changed_when: true
+
+- name: Activate br-lbaas on controller
+  ansible.builtin.command: "nmcli connection up {{ item }}"
+  loop:
+    - br-storage.232
+    - br-lbaas
+  when: is_controller | default(false)
+  failed_when: false
+  changed_when: false
+
+- name: Deploy octavia-veth-bridge systemd service on compute nodes
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/octavia-veth-bridge.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Create veth pair bridging OVS br-storage and Linux br-storage for Octavia
+      After=openvswitch-switch.service NetworkManager.service
+      Requires=openvswitch-switch.service
+      ConditionPathExists=/usr/bin/ovs-vsctl
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/bash -c '\
+        ovs-vsctl --may-exist add-br br-storage -- set bridge br-storage fail_mode=standalone 2>/dev/null || true; \
+        ip link show veth-stor-ovs >/dev/null 2>&1 || ip link add veth-stor-lnx type veth peer name veth-stor-ovs; \
+        ip link set veth-stor-lnx up; \
+        ip link set veth-stor-ovs up; \
+        ip link set veth-stor-lnx master br-storage 2>/dev/null || true; \
+        ovs-vsctl --may-exist add-port br-storage veth-stor-ovs 2>/dev/null || true'
+
+      [Install]
+      WantedBy=multi-user.target
+  when: is_compute | default(false)
+  notify: Enable octavia-veth-bridge service
+
+- name: Check if OVS is available on compute nodes
+  ansible.builtin.command: which ovs-vsctl
+  register: configure_networking_ovs_check
+  changed_when: false
+  failed_when: false
+  when: is_compute | default(false)
+
+- name: Create veth pair now if OVS is available
+  ansible.builtin.shell: |
+    set -e
+    ovs-vsctl --may-exist add-br br-storage -- set bridge br-storage fail_mode=standalone 2>/dev/null || true
+    ip link show veth-stor-ovs >/dev/null 2>&1 || ip link add veth-stor-lnx type veth peer name veth-stor-ovs
+    ip link set veth-stor-lnx up
+    ip link set veth-stor-ovs up
+    ip link set veth-stor-lnx master br-storage 2>/dev/null || true
+    ovs-vsctl --may-exist add-port br-storage veth-stor-ovs 2>/dev/null || true
+  when:
+    - is_compute | default(false)
+    - configure_networking_ovs_check.rc == 0
+  changed_when: false
