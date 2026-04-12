@@ -1,0 +1,8 @@
+---
+# Aodh (Telemetry Alarming) host mappings
+# Deployed to /etc/openstack_deploy/conf.d/aodh.yml
+
+# All Aodh services (API, evaluator, notifier, listener) run in LXC on the controller
+metering-alarm_hosts:
+  cloud-4core:
+    ip: 192.168.50.168

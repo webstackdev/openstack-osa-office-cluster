@@ -2445,6 +2445,190 @@ Already generated in `/etc/openstack_deploy/user_secrets.yml`:
 6. os-horizon-install.yml        → pick up any service catalog changes
 7. Verify: openstack metric status, openstack metric list, openstack alarm list
 
+### Phase 18 — Mistral Workflow Service
+
+Mistral provides a workflow-as-a-service engine that lets users define multi-step task graphs (workflows) in a YAML-based DSL. Workflows can orchestrate OpenStack API calls, run arbitrary actions, and integrate with other services. Depends on RabbitMQ, Galera, and Keystone being deployed. Mistral can be used for CRON. Similar to AWS Step Functions.
+
+**Links:** [User Guide](https://docs.openstack.org/mistral/2025.1/user/) · [Dashboard](https://docs.openstack.org/mistral-dashboard/latest/) · CLI: `python-mistralclient` · Horizon plugin: `mistral-dashboard`
+
+**Architecture:**
+
+- **Mistral API** — REST API (port 8989, uWSGI behind HAProxy) for workflow/execution/action CRUD.
+- **Mistral engine** — evaluates workflow DSL, schedules tasks, manages execution state.
+- **Mistral executor** — runs individual task actions (OpenStack API calls, HTTP, SSH, JavaScript, etc.).
+- **Mistral notifier** — sends notifications on workflow/task state transitions via oslo.messaging.
+
+All four services run in a single LXC container on cloud-4core.
+
+**OSA role:** `os_mistral` — fully automated. Uses Galera for workflow/execution storage. HAProxy configured automatically.
+
+**Services created:**
+
+| Service | Port | Type | Container |
+|---|---|---|---|
+| Mistral API | 8989 | `workflowv2` | `cloud-4core-mistral-container-*` (LXC) |
+| Mistral engine | — | — | Same container |
+| Mistral executor | — | — | Same container |
+| Mistral notifier | — | — | Same container |
+
+**Host inventory needed** (`/etc/openstack_deploy/conf.d/`):
+
+- `mistral-infra_hosts` → cloud-4core
+
+#### What Mistral gives us
+
+- **Workflow definitions** — YAML-based DSL for defining directed acyclic graphs of tasks. Supports branching, joining, error handling, retry, and time-based policies.
+
+- **Heat integration** — Heat can trigger Mistral workflows as stack lifecycle hooks. Mistral workflows can call Heat APIs to manage stacks, enabling complex orchestration patterns.
+
+- **Cron triggers** — schedule workflows to run on a cron expression (e.g., "every hour, clean up orphaned ports").
+
+- **Event triggers** — execute workflows in response to Ceilometer/Aodh events (complementary to Aodh's alarm actions).
+
+- **Standard action library** — built-in actions for OpenStack API calls (`nova.servers_create`, `neutron.create_port`, etc.), HTTP requests, SSH commands, JavaScript expressions, and email.
+
+- **Custom actions** — Python-based action plugins for domain-specific logic.
+
+#### Mistral Implementation
+
+**Step 1 — Create conf.d host mapping:**
+
+Create `/etc/openstack_deploy/conf.d/mistral.yml`:
+
+```yaml
+mistral-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+**Step 2 — Create Mistral LXC container:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/lxc-containers-create.yml --limit mistral-infra_all
+```
+
+**Step 3 — Deploy Mistral:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-mistral-install.yml
+```
+
+This creates the Galera `mistral` database, registers the Keystone `workflowv2` service/endpoints (port 8989), configures HAProxy, and starts all four Mistral services (API via uWSGI, engine, executor, notifier).
+
+**Step 4 — Re-run Horizon to enable Mistral dashboard:**
+
+OSA's Horizon role automatically detects `mistral_all` group membership and installs `mistral-dashboard` from `opendev.org/openstack/mistral-dashboard`. The variable `horizon_enable_mistral_ui` evaluates to `true` when `groups['mistral_all']` is non-empty. Re-running Horizon installs the pip package and registers the dashboard panels.
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-horizon-install.yml
+```
+
+After this, Horizon will have a **Workflow** panel group under the Project tab with panels for Workflows, Executions, Actions, Cron Triggers, and more.
+
+**Step 5 — Re-run utility container to pick up `python-mistralclient`:**
+
+The utility container's client list is auto-discovered from OSA's upper constraints file — it matches `python-*client==*` patterns. `python-mistralclient===6.0.0` is already in the constraints, so re-running the utility setup installs the CLI plugin automatically.
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/utility-install.yml
+```
+
+After this, the `openstack workflow` CLI commands will be available in the utility container.
+
+**Step 6 — Verify:**
+
+```bash
+# Check Mistral API is responding
+openstack workflow list   # should return empty list (no workflows defined yet)
+
+# Check service catalog
+openstack catalog show workflowv2
+
+# Create a test workflow
+cat <<'EOF' > /tmp/test_workflow.yaml
+version: '2.0'
+
+test_echo:
+  type: direct
+  input:
+    - message
+  tasks:
+    echo_task:
+      action: std.echo output="<% $.message %>"
+      publish:
+        result: <% task().result %>
+EOF
+
+openstack workflow create /tmp/test_workflow.yaml
+openstack workflow execution create test_echo '{"message": "Hello from Mistral"}'
+
+# Check execution result
+openstack workflow execution list
+openstack workflow execution show <execution-id>
+
+# Clean up
+openstack workflow delete test_echo
+```
+
+**Step 7 — Update Grafana dashboard:**
+
+Add Mistral container log queries to the existing Ceilometer, Gnocchi & Aodh Grafana dashboard (or create a separate dashboard). Add `|.*mistral.*` to the Loki container regex filters and add a "Mistral Workflow" stat panel.
+
+#### Secrets
+
+Already generated in `/etc/openstack_deploy/user_secrets.yml` (auto-populated by `pw-token-gen.py`):
+
+- `mistral_galera_password` — Galera database password
+- `mistral_oslomsg_rpc_password` — RabbitMQ messaging password
+- `mistral_service_password` — Keystone service account password
+
+#### Horizon dashboard integration
+
+The `mistral-dashboard` plugin is automatically enabled by OSA's Horizon role when Mistral is deployed. The role checks:
+
+```yaml
+horizon_enable_mistral_ui: "{{ (groups['mistral_all'] is defined) and (groups['mistral_all'] | length > 0) }}"
+```
+
+When true, it adds `mistral-dashboard` to the Horizon venv pip packages. The `mistral-dashboard` plugin provides panels under **Project → Workflow** including:
+
+- Workflows — define/upload/delete workflow definitions
+- Executions — launch workflows, view execution history and state
+- Tasks — inspect individual task runs within executions
+- Actions — browse available actions and custom action plugins
+- Cron Triggers — manage scheduled workflow runs
+- Event Triggers — manage event-driven workflow triggers
+
+#### CLI plugin
+
+`python-mistralclient` (v6.0.0 pinned in OSA constraints) adds `openstack workflow *` commands:
+
+- `openstack workflow list/create/delete/show`
+- `openstack workflow execution create/list/show/delete`
+- `openstack workflow execution input/output show`
+- `openstack action definition list/show`
+- `openstack cron trigger create/list/delete`
+
+Installed automatically in the utility container when `utility-install.yml` is re-run (auto-discovered from upper constraints).
+
+#### Deploy order summary
+
+1. Create conf.d file (`mistral.yml`)
+2. `lxc-containers-create.yml --limit mistral-infra_all` → create Mistral container
+3. `os-mistral-install.yml` → Mistral API + engine + executor + notifier
+4. `os-horizon-install.yml` → enable Mistral dashboard plugin
+5. `utility-install.yml` → install `python-mistralclient` CLI
+6. Update Grafana dashboard with Mistral log queries
+7. Verify: `openstack workflow list`, `openstack catalog show workflowv2`
+
+## Phase 19 - Adjutant
+
+(Adjutant) Basic workflow service [(documentation)](https://docs.openstack.org/adjutant/latest/) [(dashboard)](https://opendev.org/openstack/adjutant-ui)
+
 ### Phase ?? — Zaqar Messaging Service
 
 Zaqar 2025.2 (v21.0.0) is actively maintained — releases through 2026.1 exist. However, OSA has zero Zaqar automation — this will be a fully custom Ansible deployment.

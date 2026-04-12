@@ -43,7 +43,7 @@
       },
       "targets": [
         {
-          "expr": "sum by(container) (rate({job=\"openstack\", container=~\".*gnocchi.*|.*ceilometer.*\"} [$__auto]))",
+          "expr": "sum by(container) (rate({job=\"openstack\", container=~\".*gnocchi.*|.*ceilometer.*|.*aodh.*|.*mistral.*\"} [$__auto]))",
           "legendFormat": "{{container}}",
           "refId": "A"
         }
@@ -76,7 +76,7 @@
       },
       "targets": [
         {
-          "expr": "sum by(container) (rate({job=\"openstack\", container=~\".*gnocchi.*|.*ceilometer.*\"} |~ \"(?i)ERROR\" [$__auto]))",
+          "expr": "sum by(container) (rate({job=\"openstack\", container=~\".*gnocchi.*|.*ceilometer.*|.*aodh.*|.*mistral.*\"} |~ \"(?i)ERROR\" [$__auto]))",
           "legendFormat": "{{container}}",
           "refId": "A"
         }
@@ -87,7 +87,7 @@
       "type": "stat",
       "title": "Gnocchi API (8041)",
       "description": "Gnocchi API container log activity — non-zero means the service is running and logging",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 7 },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 7 },
       "datasource": { "type": "loki", "uid": "loki" },
       "fieldConfig": {
         "defaults": {
@@ -123,7 +123,7 @@
       "type": "stat",
       "title": "Ceilometer Central",
       "description": "Ceilometer central container log activity",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 7 },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 7 },
       "datasource": { "type": "loki", "uid": "loki" },
       "fieldConfig": {
         "defaults": {
@@ -159,7 +159,7 @@
       "type": "stat",
       "title": "Ceilometer Compute Agents",
       "description": "Ceilometer compute agent log activity across compute nodes",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 7 },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 7 },
       "datasource": { "type": "loki", "uid": "loki" },
       "fieldConfig": {
         "defaults": {
@@ -191,10 +191,82 @@
       ]
     },
     {
+      "id": 7,
+      "type": "stat",
+      "title": "Aodh Alarming",
+      "description": "Aodh alarming container log activity",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 7 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "No logs", "color": "red" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "count_over_time({job=\"openstack\", container=~\".*aodh.*\"} [5m])",
+          "legendFormat": "aodh",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Mistral Workflow",
+      "description": "Mistral workflow engine container log activity",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 7 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "No logs", "color": "red" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "count_over_time({job=\"openstack\", container=~\".*mistral.*\"} [5m])",
+          "legendFormat": "mistral",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 6,
       "type": "logs",
       "title": "Telemetry Logs",
-      "description": "Live log stream from Gnocchi and Ceilometer services",
+      "description": "Live log stream from Gnocchi, Ceilometer, and Aodh services",
       "gridPos": { "h": 16, "w": 24, "x": 0, "y": 11 },
       "datasource": { "type": "loki", "uid": "loki" },
       "options": {
@@ -209,7 +281,7 @@
       },
       "targets": [
         {
-          "expr": "{job=\"openstack\", container=~\".*gnocchi.*|.*ceilometer.*\"} |~ \"$search\"",
+          "expr": "{job=\"openstack\", container=~\".*gnocchi.*|.*ceilometer.*|.*aodh.*|.*mistral.*\"} |~ \"$search\"",
           "refId": "A"
         },
         {
@@ -220,7 +292,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["home-cloud", "telemetry", "ceilometer", "gnocchi"],
+  "tags": ["home-cloud", "telemetry", "ceilometer", "gnocchi", "aodh", "mistral"],
   "templating": {
     "list": [
       {
@@ -236,7 +308,7 @@
   "refresh": "30s",
   "timepicker": {},
   "timezone": "browser",
-  "title": "Ceilometer & Gnocchi",
+  "title": "Telemetry & Workflow Services",
   "uid": "ceilometer-gnocchi",
   "version": 0
 }

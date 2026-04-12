@@ -8,6 +8,10 @@ This is consistent with the OSA defaults comment that said barbican-ui "does not
 
 Bottom line: The barbican-ui package is not functional — it's an incomplete scaffolding. There is no working Barbican Horizon plugin at this point. The Barbican team hasn't built out the UI. You can manage secrets via the CLI (openstack secret store/list/get/delete), which is the standard approach.
 
+## OpenStack Service for Docker Images
+
+
+
 ## Bugs in Zun to fix upstream
 
 ### 1. Zun Docker driver KeyError on images without Entrypoint

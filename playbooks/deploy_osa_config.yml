@@ -100,6 +100,18 @@
         dest: "{{ osa_config_dir }}/conf.d/ceilometer.yml"
         mode: "0644"
 
+    - name: Deploy Aodh host mapping
+      ansible.builtin.template:
+        src: templates/openstack_deploy/conf.d/aodh.yml.j2
+        dest: "{{ osa_config_dir }}/conf.d/aodh.yml"
+        mode: "0644"
+
+    - name: Deploy Mistral host mapping
+      ansible.builtin.template:
+        src: templates/openstack_deploy/conf.d/mistral.yml.j2
+        dest: "{{ osa_config_dir }}/conf.d/mistral.yml"
+        mode: "0644"
+
     - name: Check if user_secrets.yml has been populated
       ansible.builtin.shell: >
         grep -c "^[a-z].*_password:$" {{ osa_config_dir }}/user_secrets.yml || true
