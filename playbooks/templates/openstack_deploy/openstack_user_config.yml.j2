@@ -232,3 +232,27 @@ trove-infra_hosts:
 octavia-infra_hosts:
   cloud-4core:
     ip: 192.168.50.168
+
+# Heat Orchestration — backfill (container already deployed during initial OSA setup)
+orchestration_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Magnum Container Infrastructure Management — API/conductor in LXC on cloud-4core
+magnum-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Zun Container as a Service — API/wsproxy in LXC on cloud-4core
+zun-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Zun compute (container engine) — bare metal on all compute nodes
+zun-compute_hosts:
+  cloud-6core:
+    ip: 192.168.50.171
+  cloud-celeron:
+    ip: 192.168.50.178
+  cloud-eugene:
+    ip: 192.168.50.234

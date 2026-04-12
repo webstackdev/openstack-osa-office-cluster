@@ -89,6 +89,7 @@
   loop:
     - node_overview.json
     - openstack_logs.json
+    - ceilometer_gnocchi.json
   notify: Restart grafana
 
 - name: Enable and start Grafana

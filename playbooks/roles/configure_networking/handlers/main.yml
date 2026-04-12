@@ -10,3 +10,17 @@
     enabled: true
     daemon_reload: true
     state: started
+
+- name: Enable provider-bridge-eth12 service
+  ansible.builtin.systemd:
+    name: provider-bridge-eth12.service
+    enabled: true
+    daemon_reload: true
+    state: started
+
+- name: Enable lxc-veth-rewire service
+  ansible.builtin.systemd:
+    name: lxc-veth-rewire.service
+    enabled: true
+    daemon_reload: true
+    state: started

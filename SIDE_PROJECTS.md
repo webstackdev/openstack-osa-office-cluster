@@ -8,6 +8,69 @@ This is consistent with the OSA defaults comment that said barbican-ui "does not
 
 Bottom line: The barbican-ui package is not functional — it's an incomplete scaffolding. There is no working Barbican Horizon plugin at this point. The Barbican team hasn't built out the UI. You can manage secrets via the CLI (openstack secret store/list/get/delete), which is the standard approach.
 
+## Bugs in Zun to fix upstream
+
+### 1. Zun Docker driver KeyError on images without Entrypoint
+
+- **Repo:** https://opendev.org/openstack/zun (`stable/2025.2` branch)
+
+- **File:** `zun/container/docker/driver.py`, method `DockerDriver.create()`, lines 267-269
+
+- **Bug:** When a container is created from an image that has no `Entrypoint` in its config (e.g., `cirros:latest`), the code does:
+
+  ```python
+  container.entrypoint = entrypoint or image_dict['Config']['Entrypoint']
+  container.command = command or image_dict['Config']['Cmd']
+  ```
+
+  Direct dict access raises `KeyError` if the key is absent. Not all images have `Entrypoint` or `Cmd` in their Docker image config.
+- **Fix:** Change to `.get()`:
+
+  ```python
+  container.entrypoint = entrypoint or image_dict['Config'].get('Entrypoint')
+  container.command = command or image_dict['Config'].get('Cmd')
+  ```
+
+- **Hotfix applied:** All 3 compute nodes patched at `/openstack/venvs/zun-32.0.0.0b2.dev7/lib/python3.12/site-packages/zun/container/docker/driver.py`. Will be overwritten on next `os-zun-install.yml` run.
+
+- **Upstream:** Submit via Gerrit to `openstack/zun` on the `stable/2025.2` branch (and `master`).
+
+### 2. Kuryr-libnetwork MAC address update conflicts with OVN port binding
+
+- **Repo:** https://opendev.org/openstack/kuryr-libnetwork (`stable/2025.2` branch)
+
+- **File:** `kuryr_libnetwork/port_driver/driver.py`, method `Driver.update_port()`, lines 144-145
+
+- **Bug:** During `CreateEndpoint`, Kuryr's `update_port()` builds a single Neutron `update_port` API call that includes both `binding:host_id` (to bind the port to the compute host) and `mac_address` (to change the Neutron port MAC to match Docker's generated MAC). With OVN as the ML2 plugin, the port binding is processed first, and then OVN rejects the MAC change on the now-bound port:
+
+  ```bash
+  Unable to complete operation on port <uuid>, port is already bound,
+  port type: ovs, old_mac fa:16:3e:..., new_mac f6:b8:88:...
+  ```
+
+  The MAC update is unnecessary because `kuryr/lib/binding/drivers/veth.py:port_bind()` (line 65-68) already sets the container's veth interface MAC to the Neutron port's MAC address via `_configure_container_iface(hwaddr=port['mac_address'])`. Docker's generated MAC is never used — the veth binding overrides it.
+
+- **Call chain:** `controllers.py:network_driver_create_endpoint()` → `controllers.py:_create_or_update_port()` → `driver.py:Driver.update_port()` → `app.neutron.update_port()` (Neutron API, rejected by OVN)
+
+- **Fix:** Remove or guard the MAC update in `update_port()`. The simplest fix:
+
+  ```python
+  # Before (lines 144-145):
+  if interface_mac and port['mac_address'] != interface_mac:
+      updated_port['mac_address'] = interface_mac
+
+  # After — skip MAC update; veth binding sets the correct MAC on the
+  # container interface from the Neutron port's MAC address.
+  # Updating the Neutron port MAC is both unnecessary and breaks OVN,
+  # which rejects MAC changes on already-bound ports.
+  ```
+
+  A more conservative fix would split the update into two calls (MAC first, then binding), but skipping the MAC update entirely is correct since the veth driver doesn't use it.
+
+- **Hotfix applied:** All 3 compute nodes patched at `/openstack/venvs/zun-32.0.0.0b2.dev7/lib/python3.12/site-packages/kuryr_libnetwork/port_driver/driver.py`. Kuryr-libnetwork restarted on all nodes. Will be overwritten on next `os-zun-install.yml` run.
+
+- **Upstream:** Submit via Gerrit to `openstack/kuryr-libnetwork` on the `stable/2025.2` branch (and `master`). Note: kuryr-libnetwork is in maintenance mode with low activity — patch may need to be self-approved or find a core reviewer.
+
 ## OSA Role for Zaqar
 
 OSA terminology: The correct term is "role", not "package." Each OpenStack service gets:

@@ -263,3 +263,65 @@ openstack_user_identity:
       server_group_members: 50
       security_group: "{{ '{{' }} (_max_amphora_instances | int) * 1.5 | int | abs {{ '}}' }}"
       security_group_rule: "{{ '{{' }} ((_max_amphora_instances | int) * 1.5 | int | abs) * 100 {{ '}}' }}"
+
+# ============================================================================
+# uWSGI / API worker tuning
+# ============================================================================
+# OSA defaults to min(vcpus * 2, 16) workers per service, which on cloud-4core
+# (8 threads) yields 16 workers each — far too many for a home lab with ~34 qps
+# total. These overrides free ~7 GB RAM on the controller node.
+neutron_wsgi_processes: 4
+nova_wsgi_processes: 4
+keystone_wsgi_processes: 4
+heat_wsgi_processes: 4
+placement_wsgi_processes: 4
+zun_wsgi_processes: 2
+octavia_wsgi_processes: 2
+trove_api_workers: 2
+trove_conductor_workers: 2
+magnum_wsgi_processes: 2
+magnum_conductor_workers: 2
+
+# ============================================================================
+# Zun (Container as a Service)
+# ============================================================================
+# Compute nodes shared with Nova — both manage workloads on the same hosts
+zun_zun_conf_overrides:
+  compute:
+    host_shared_with_nova: true
+
+# Disable Kata Containers — use runc for container runtime.
+# Kata dedicates resources per container (own kernel, pinned memory) which is
+# excessive for a resource-constrained lab. runc shares the host kernel and
+# allows overcommit via cgroup scheduling.
+zun_kata_enabled: "False"
+zun_container_runtime: runc
+
+# Restrict Docker TCP listener to management network only (not 0.0.0.0)
+zun_docker_bind_host: "{{ '{{' }} management_address {{ '}}' }}"
+
+# Auto-prune unused Docker images daily to save disk space
+zun_docker_prune_images: true
+zun_docker_prune_frequency: day
+
+# ============================================================================
+# Ceilometer / Gnocchi (Telemetry)
+# ============================================================================
+# Use Swift for Gnocchi metric storage (already deployed on cloud-eugene)
+gnocchi_storage_driver: swift
+
+# ============================================================================
+# Magnum (Container Infrastructure Management / Kubernetes as a Service)
+# ============================================================================
+# Use Barbican for cluster TLS certificate storage (we have it deployed)
+magnum_cert_manager_type: barbican
+
+# Inject the OSA self-signed root CA into Magnum VMs so heat-container-agent
+# can verify TLS connections to Heat/Keystone endpoints (which sit behind
+# HAProxy with self-signed certs). HAProxy presents the server cert +
+# intermediate CA in the TLS handshake, so VMs only need the root CA to
+# complete the chain. OSA's PKI management deploys this root CA to all
+# containers at /usr/local/share/ca-certificates/.
+magnum_config_overrides:
+  drivers:
+    openstack_ca_file: /usr/local/share/ca-certificates/ExampleCorpRoot.crt

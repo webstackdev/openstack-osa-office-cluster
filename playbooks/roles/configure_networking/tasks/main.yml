@@ -84,29 +84,12 @@
   when: "'br-storage-port-' not in configure_networking_nm_connections.stdout"
   changed_when: true
 
-- name: Create br-vlan bridge
-  ansible.builtin.command: >
-    nmcli connection add type bridge con-name br-vlan ifname br-vlan
-    ipv4.method disabled ipv6.method disabled
-    bridge.stp no bridge.forward-delay 0
-    connection.autoconnect yes
-  when: "'br-vlan' not in configure_networking_nm_connections.stdout"
-  changed_when: true
-
-- name: Create br-vlan port
-  ansible.builtin.command: >
-    nmcli connection add type ethernet con-name br-vlan-port-{{ provider_interface }}
-    ifname {{ provider_interface }} master br-vlan connection.autoconnect yes
-  when: "'br-vlan-port-' not in configure_networking_nm_connections.stdout"
-  changed_when: true
-
 - name: Activate bridges
   ansible.builtin.command: "nmcli connection up {{ item }}"
   loop:
     - br-mgmt
     - br-vxlan
     - br-storage
-    - br-vlan
   failed_when: false
   changed_when: false
 
@@ -116,7 +99,6 @@
     - br-mgmt
     - br-vxlan
     - br-storage
-    - br-vlan
   changed_when: false
 
 # --- Octavia lbaas management network (VLAN 232 on br-storage) ---
@@ -199,6 +181,92 @@
     ip link set veth-stor-ovs up
     ip link set veth-stor-lnx master br-storage 2>/dev/null || true
     ovs-vsctl --may-exist add-port br-storage veth-stor-ovs 2>/dev/null || true
+  when:
+    - is_compute | default(false)
+    - configure_networking_ovs_check.rc == 0
+  changed_when: false
+
+# --- LXC veth bridge re-wiring (controller only) ---
+# NetworkManager re-activates bridges during LXC container startup, which
+# drops dynamically-added veth ports. Only the NM-managed physical port
+# (e.g., enp11s0) gets re-added. LXC veths for eth2 (br-storage) end up
+# orphaned. This service parses LXC container configs and re-attaches
+# any veths that aren't on their configured bridge.
+
+- name: Deploy lxc-veth-rewire systemd service on controller
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/lxc-veth-rewire.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Re-attach orphaned LXC container veths to their bridges
+      After=lxc.service NetworkManager.service
+      Requires=lxc.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/bash -c '\
+        for ini in /var/lib/lxc/*/eth*.ini; do \
+          [ -f "$ini" ] || continue; \
+          bridge=$(grep -oP "(?<=lxc.net.\\d+.link = ).*" "$ini" 2>/dev/null || true); \
+          veth=$(grep -oP "(?<=lxc.net.\\d+.veth.pair = ).*" "$ini" 2>/dev/null || true); \
+          [ -n "$bridge" ] && [ -n "$veth" ] || continue; \
+          ip link show "$veth" >/dev/null 2>&1 || continue; \
+          cur=$(ip -o link show "$veth" 2>/dev/null | grep -oP "master \\K\\S+" || true); \
+          if [ "$cur" != "$bridge" ]; then \
+            ip link set "$veth" master "$bridge" 2>/dev/null && \
+              echo "Re-attached $veth to $bridge"; \
+          fi; \
+        done'
+
+      [Install]
+      WantedBy=multi-user.target
+  when: is_controller | default(false)
+  notify: Enable lxc-veth-rewire service
+
+# --- Provider NIC → eth12 OVS bridge ---
+# OSA maps physnet1 to the eth12 OVS bridge (via host_bind_override: "eth12").
+# OVN creates a patch port on eth12 for physnet1 traffic, but nothing adds the
+# physical provider NIC to eth12. OSA's neutron_ovn_controller role may create a
+# separate br-provider bridge with the NIC, which is disconnected from OVN.
+# This service ensures the provider NIC is moved into eth12 on every boot.
+
+- name: Deploy provider-bridge-eth12 systemd service on compute nodes
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/provider-bridge-eth12.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Move provider NIC {{ provider_interface }} into eth12 OVS bridge for physnet1
+      After=openvswitch-switch.service NetworkManager.service
+      Requires=openvswitch-switch.service
+      ConditionPathExists=/usr/bin/ovs-vsctl
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/bash -c '\
+        cur=$(ovs-vsctl port-to-br {{ provider_interface }} 2>/dev/null || true); \
+        if [ "$cur" = "br-provider" ]; then \
+          ovs-vsctl del-port br-provider {{ provider_interface }}; \
+        fi; \
+        ovs-vsctl --may-exist add-port eth12 {{ provider_interface }}; \
+        ip link set eth12 up'
+
+      [Install]
+      WantedBy=multi-user.target
+  when: is_compute | default(false)
+  notify: Enable provider-bridge-eth12 service
+
+- name: Move provider NIC to eth12 now if OVS is available
+  ansible.builtin.shell: |
+    cur=$(ovs-vsctl port-to-br {{ provider_interface }} 2>/dev/null || true)
+    if [ "$cur" = "br-provider" ]; then
+      ovs-vsctl del-port br-provider {{ provider_interface }}
+    fi
+    ovs-vsctl --may-exist add-port eth12 {{ provider_interface }}
+    ip link set eth12 up
   when:
     - is_compute | default(false)
     - configure_networking_ovs_check.rc == 0

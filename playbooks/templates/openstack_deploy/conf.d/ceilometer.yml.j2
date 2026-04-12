@@ -1,0 +1,17 @@
+---
+# Ceilometer (Telemetry) host mappings
+# Deployed to /etc/openstack_deploy/conf.d/ceilometer.yml
+
+# Central + notification agents run in LXC on the controller
+metering-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+# Compute polling agents run bare-metal on each compute node
+metering-compute_hosts:
+  cloud-6core:
+    ip: 192.168.50.171
+  cloud-celeron:
+    ip: 192.168.50.178
+  cloud-eugene:
+    ip: 192.168.50.234

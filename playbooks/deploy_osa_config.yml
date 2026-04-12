@@ -88,6 +88,18 @@
         dest: "{{ osa_config_dir }}/conf.d/swift.yml"
         mode: "0644"
 
+    - name: Deploy Gnocchi host mapping
+      ansible.builtin.template:
+        src: templates/openstack_deploy/conf.d/gnocchi.yml.j2
+        dest: "{{ osa_config_dir }}/conf.d/gnocchi.yml"
+        mode: "0644"
+
+    - name: Deploy Ceilometer host mapping
+      ansible.builtin.template:
+        src: templates/openstack_deploy/conf.d/ceilometer.yml.j2
+        dest: "{{ osa_config_dir }}/conf.d/ceilometer.yml"
+        mode: "0644"
+
     - name: Check if user_secrets.yml has been populated
       ansible.builtin.shell: >
         grep -c "^[a-z].*_password:$" {{ osa_config_dir }}/user_secrets.yml || true

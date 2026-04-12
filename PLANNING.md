@@ -1503,8 +1503,12 @@ No manual certificate setup is needed — `octavia_generate_certs: true` (defaul
        net_name: "lbaas"
        group_binds:
          - neutron_ovn_controller
-         - octavia-infra_hosts
+         - octavia_all
    ```
+
+   > **Implementation note:** `group_binds` must use `octavia_all` (the container group),
+   > not `octavia-infra_hosts` (the physical host group). Using the physical host group
+   > causes the Octavia LXC container to lack the lbaas network interface.
 
    Host group:
    ```yaml
@@ -1544,34 +1548,37 @@ No manual certificate setup is needed — `octavia_generate_certs: true` (defaul
          security_group_rule: "{{ ((_max_amphora_instances | int) * 1.5 | int | abs) * 100 }}"
    ```
 
-3. **Host preparation** — create `br-lbaas` bridge with VLAN sub-interface on cloud-4core:
-   ```bash
-   # On cloud-4core:
-   # br-lbaas bridge (Octavia container veths plug in here)
-   sudo nmcli con add type bridge con-name br-lbaas ifname br-lbaas \
-     ipv4.method disabled ipv6.method disabled
-   # VLAN 232 sub-interface on the storage bridge
-   sudo nmcli con add type vlan con-name br-storage-vlan232 \
-     ifname br-storage.232 dev br-storage id 232 \
-     connection.master br-lbaas connection.slave-type bridge
-   sudo nmcli con up br-lbaas
-   sudo nmcli con up br-storage-vlan232
-   ```
+3. **`configure_networking` role** — extended for Octavia lbaas networking:
+
+   **Controller (cloud-4core):** `br-lbaas` Linux bridge + `br-storage.232` VLAN sub-interface
+   created via NetworkManager. The Octavia container's `eth14` veth plugs into `br-lbaas`.
+
+   **Compute nodes:** OVS bridge `br-storage` + veth pair (`veth-stor-lnx` ↔ `veth-stor-ovs`)
+   connecting OVS to the Linux `br-storage`. This is required because `br-storage` is a
+   Linux bridge managed by NetworkManager, but OVN needs an OVS bridge for the
+   `lbaas:br-storage` mapping. A systemd oneshot service (`octavia-veth-bridge.service`)
+   recreates the veth pair on boot after OVS starts.
+
+   > **Implementation note:** `neutron_ml2_drivers_type` must include `vlan` (i.e.,
+   > `"geneve,flat,vlan"`) or Neutron will reject the lbaas provider network with
+   > `network_type value 'vlan' not supported`.
 
 #### Deployment plan
 
-1. Create `br-lbaas` bridge + VLAN sub-interface on cloud-4core (NetworkManager)
-2. Add lbaas network config and `octavia-infra_hosts` to `openstack_user_config.yml.j2`
-3. Add Octavia overrides (including service project quotas) to `user_variables.yml.j2`
-4. Deploy OSA config: `ansible-playbook playbooks/deploy_osa_config.yml`
-5. Apply service project quotas: `openstack-ansible /opt/openstack-ansible/playbooks/openstack-resources.yml`
-6. Create LXC container: `openstack-ansible playbooks/containers-lxc-create.yml --limit lxc_hosts,octavia_all`
-7. Run: `openstack-ansible /opt/openstack-ansible/playbooks/os-octavia-install.yml`
-8. Update HAProxy: `openstack-ansible /opt/openstack-ansible/playbooks/haproxy-install.yml`
-9. Install `octavia-dashboard` Horizon plugin and verify the Load Balancers panel appears
-10. Verify: `openstack loadbalancer list` — should return empty list
-11. Test OVN provider: `openstack loadbalancer create --name test-lb --provider ovn --vip-subnet-id <subnet>`
-12. Test amphora provider: `openstack loadbalancer create --name test-lb-amp --provider amphorav2 --vip-subnet-id <subnet>`
+1. Update `configure_networking` role with lbaas bridge setup (controller + compute)
+2. Run `prepare_target_hosts.yml` to deploy br-lbaas (controller) and octavia-veth-bridge service (compute)
+3. Add lbaas network config and `octavia-infra_hosts` to `openstack_user_config.yml.j2`
+4. Add Octavia overrides + `neutron_ml2_drivers_type: "geneve,flat,vlan"` to `user_variables.yml.j2`
+5. Deploy OSA config: `ansible-playbook playbooks/deploy_osa_config.yml`
+6. Update Neutron for VLAN type: `openstack-ansible playbooks/os-neutron-install.yml --tags neutron-config`
+7. Apply service project quotas: `openstack-ansible playbooks/openstack-resources.yml`
+8. Create LXC container: `openstack-ansible playbooks/containers-lxc-create.yml --limit lxc_hosts,octavia_all`
+9. Run: `openstack-ansible playbooks/os-octavia-install.yml`
+10. Update HAProxy: `openstack-ansible playbooks/haproxy-install.yml`
+11. Install `octavia-dashboard` Horizon plugin: `openstack-ansible playbooks/os-horizon-install.yml`
+12. Verify: `openstack loadbalancer list` — should return empty list
+13. Test OVN provider: `openstack loadbalancer create --name test-lb --provider ovn --vip-subnet-id <subnet>`
+14. Test amphora provider: `openstack loadbalancer create --name test-lb-amp --provider amphorav2 --vip-subnet-id <subnet>`
 
 #### Open questions for Octavia
 
@@ -1630,21 +1637,21 @@ Unlike Zaqar, OSA ships a complete `os_zun` role with playbook, env.d, HAProxy i
 ```
                          ┌──────────── cloud-4core ────────────┐
                          │                                     │
-   Tenant / CLI ──────▶  │  HAProxy :9517 (zun-api)            │
-   openstack            │  HAProxy :6784 (zun-wsproxy)        │
-   appcontainer run     │      │                               │
-                         │      └──▶ zun_api_container (LXC)   │
+   Tenant / CLI ──────▶ │  HAProxy :9517 (zun-api)            │
+   openstack             │  HAProxy :6784 (zun-wsproxy)        │
+   appcontainer run      │      │                              │
+                         │      └──▶ zun_api_container (LXC)  │
                          │           ├─ zun-api (uWSGI)        │
-                         │           └─ zun-wsproxy             │
+                         │           └─ zun-wsproxy            │
                          │                                     │
                          │  Galera ─── zun DB                  │
                          │  RabbitMQ ─── /zun vhost            │
                          │  Keystone ─── zun + kuryr users     │
-                         └──────────────────────────────────────┘
+                         └─────────────────────────────────────┘
                                         │ RPC
-                         ┌──────────────┼──────────────────────┐
+                         ┌──────────────┼────────────────────────┐
                          │              ▼                       │
-   ┌─ cloud-6core ──┐  ┌─ cloud-celeron ─┐  ┌─ cloud-eugene ─┐
+   ┌─ cloud-6core ───┐  ┌─ cloud-celeron  ─┐  ┌─ cloud-eugene ───┐
    │   zun-compute   │  │   zun-compute    │  │   zun-compute   │
    │   kuryr-libnet  │  │   kuryr-libnet   │  │   kuryr-libnet  │
    │   zun-cni-daemon│  │   zun-cni-daemon │  │   zun-cni-daemon│
@@ -1695,27 +1702,27 @@ zun_zun_conf_overrides:
 
 #### Deployment plan
 
-**Step 0 — Pre-checks**
+**Step 0 — Pre-checks** ✅
 
-- [ ] Verify compute node CPU virtualization extensions for Kata:
+- [x] Verify compute node CPU virtualization extensions for Kata:
   `grep -c 'vmx\|svm' /proc/cpuinfo` on each compute node
   (Kata requires HW virt; if missing, set `zun_kata_enabled: "False"`)
-- [ ] Verify Docker is not already installed on compute nodes:
+- [x] Verify Docker is not already installed on compute nodes:
   `dpkg -l | grep docker` — the role will install Docker CE and may conflict with existing installs
-- [ ] Check available disk space on compute nodes for Docker images:
+- [x] Check available disk space on compute nodes for Docker images:
   `/var/lib/docker` needs room for container images (10G+ recommended)
-- [ ] Verify Placement service is operational:
+- [x] Verify Placement service is operational:
   `openstack resource provider list` should show compute nodes
 
-  **Step 1 — Update `openstack_user_config.yml.j2`**
+  **Step 1 — Update `openstack_user_config.yml.j2`** ✅
 
   Add `zun-infra_hosts` and `zun-compute_hosts` sections to the config template. This tells OSA where to deploy Zun.
 
-  **Step 2 — Update `user_variables.yml.j2`**
+  **Step 2 — Update `user_variables.yml.j2`** ✅
 
   Add the `zun_zun_conf_overrides` section with `host_shared_with_nova: true`. Decide on Kata Containers (enabled by default — requires nested virt or bare metal virt extensions).
 
-  **Step 3 — Deploy OSA config**
+  **Step 3 — Deploy OSA config** ✅
 
 ```bash
 cd /home/kevin/Repos/home-cloud
@@ -1724,10 +1731,12 @@ ansible-playbook playbooks/deploy_osa_config.yml
 
 This renders the updated templates to `/etc/openstack_deploy/`.
 
-**Step 4 — Run the Zun playbook**
+**Step 4 — Run the Zun playbook** ✅
 
 ```bash
 cd /opt/openstack-ansible
+# Must create LXC container first (os-zun-install.yml doesn't do it)
+openstack-ansible playbooks/lxc-containers-create.yml --limit cloud-4core-zun-api-container*
 openstack-ansible playbooks/os-zun-install.yml
 ```
 
@@ -1745,7 +1754,7 @@ This single playbook does everything:
 11. Configures HAProxy frontends for ports 9517 and 6784
 12. Starts all systemd services
 
-**Step 5 — Verify**
+**Step 5 — Verify** ✅
 
 ```bash
 # Check services are up
@@ -1772,9 +1781,9 @@ openstack appcontainer stop test-nginx
 openstack appcontainer delete test-nginx
 ```
 
-**Step 6 — Install zun-ui Horizon plugin**
+**Step 6 — Install zun-ui Horizon plugin** ✅
 
-The `zun-ui` dashboard plugin adds a "Containers" panel to Horizon. This is a separate install — the os_zun role doesn't include it. Install and verify the panel appears as part of this phase.
+The `zun-ui` dashboard plugin adds a "Containers" panel to Horizon. This is a separate install — the os_zun role doesn't include it. Installed via `pip install zun-ui` in the Horizon container's venv, then restarted Apache. Panel symlinks are created automatically by pip.
 
 #### IaC approach
 
@@ -1815,9 +1824,23 @@ These compute nodes are Ubuntu 24.04 **desktop workstations**. The `os_zun` role
 
 - ~~Docker TCP exposure~~ → **Restrict to management network.** Set `zun_docker_bind_host` to each node's management IP (e.g., `192.168.50.x`) instead of the default `0.0.0.0`. This limits the unauthenticated Docker TCP API to the management VLAN. The role also binds to the local Unix socket for local access.
 
-- ~~Kuryr + OVN~~ → Kuryr-libnetwork is bundled into the `os_zun` role and deployed on compute nodes as a Docker network plugin. Not a standalone service — no separate deployment phase needed. OVN compatibility should work but will be verified during deployment.
+- ~~Kuryr + OVN~~ → Kuryr-libnetwork is bundled into the `os_zun` role and deployed on compute nodes as a Docker network plugin. Not a standalone service — no separate deployment phase needed. OVN compatibility required two hotfixes — see "Issues encountered" below.
 
 **All Zun open questions resolved.**
+
+#### Issues encountered during deployment
+
+1. **Docker apt repo conflict:** Pre-existing `/etc/apt/sources.list.d/docker.list` (legacy one-line format) conflicted with the `os_zun` role's `docker-ce.sources` (DEB822 format) — different `Signed-By` values for the same repository. **Fix:** Removed `docker.list` on all 3 compute nodes before re-running.
+
+2. **LXC container not auto-created:** `os-zun-install.yml` does not create the LXC container for the Zun API — it expects it to already exist. **Fix:** Ran `lxc-containers-create.yml --limit cloud-4core-zun-api-container*` before the Zun playbook.
+
+3. **libssl3 stale package on cloud-celeron:** A stale `rc` (removed, config-files) entry for `libssl3` blocked apt resolution of `libssl3` → `libssl3t64` (Ubuntu 24.04 time_t ABI transition). The `uwsgi` role hardcodes `libssl3` as a dependency. **Fix:** `sudo dpkg --purge libssl3` on cloud-celeron.
+
+4. **Zun Docker driver KeyError (bug in 2025.2):** `zun/container/docker/driver.py` line 268 uses `image_dict['Config']['Entrypoint']` (direct dict access) which raises `KeyError` for images without an Entrypoint field (e.g., cirros). **Hotfix:** Patched all 3 compute nodes to use `.get('Entrypoint')` and `.get('Cmd')`. This is a Zun bug — will be overwritten on next OSA update.
+
+5. **Kuryr + OVN MAC address conflict (bug in kuryr-libnetwork with OVN):** When creating a container endpoint, Kuryr's `port_driver/driver.py:update_port()` tries to update both `binding:host_id` and `mac_address` on a Neutron port in a single API call. OVN processes the binding first, then rejects the MAC change on the now-bound port: *"port is already bound, port type: ovs, old_mac fa:16:3e:..., new_mac f6:b8:88:..."*. The MAC update is unnecessary because the veth binding driver (`kuryr/lib/binding/drivers/veth.py:port_bind()`) already sets the container interface MAC to the Neutron port's MAC address. **Hotfix:** Commented out lines 144-145 in `kuryr_libnetwork/port_driver/driver.py` on all 3 compute nodes to skip the MAC update. Restarted kuryr-libnetwork. This is a Kuryr bug with OVN — will be overwritten on next OSA update.
+
+For right now, we're leaving these buys unfixed and waiting for upstream fixes.
 
 ### Phase 15 — Magnum Kubernetes as a Service
 
@@ -1930,14 +1953,17 @@ Tested versions (from the Magnum 2025.1 user guide):
 
 **2025.2 (Flamingo) is not yet in the tested matrix.** The Dalmatian combination is the safest starting point.
 
+**Important: FCOS 38 ships containerd 1.4.4, which only supports CRI v1alpha2. kubelet v1.28+ requires CRI v1 (containerd >= 1.6).** Magnum's install-cri.sh downloads a containerd tarball from GitHub and extracts it over the system binary. The default `CONTAINERD_VERSION=1.4.4` is too old. You **must** set `containerd_version=1.7.25` (or later 1.7.x) on the cluster template labels. Using a newer FCOS image (e.g., FCOS 43) avoids the system containerd being old, but Magnum still overwrites it with whatever `containerd_version` is set to.
+
 The `os_magnum` role can auto-upload images via the `magnum_glance_images` variable, or you can upload manually:
 ```bash
-wget https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/38.20230806.3.0/x86_64/fedora-coreos-38.20230806.3.0-openstack.x86_64.qcow2.xz
-xz -d fedora-coreos-38.20230806.3.0-openstack.x86_64.qcow2.xz
-openstack image create fedora-coreos-38 \
+curl -L -o fedora-coreos-43.qcow2.xz \
+  "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/43.20260316.3.1/x86_64/fedora-coreos-43.20260316.3.1-openstack.x86_64.qcow2.xz"
+xz -d fedora-coreos-43.qcow2.xz
+openstack image create fedora-coreos-43 \
   --disk-format qcow2 --container-format bare --public \
   --property os_distro=fedora-coreos \
-  --file fedora-coreos-38.20230806.3.0-openstack.x86_64.qcow2
+  --file fedora-coreos-43.qcow2
 ```
 
 #### Certificate management
@@ -2004,34 +2030,55 @@ From `os_magnum` role defaults:
 1. Backfill `orchestration_hosts` in `openstack_user_config.yml.j2` (sync IaC with deployed reality)
 2. Add `magnum-infra_hosts` to `openstack_user_config.yml.j2`
 3. Add `magnum_cert_manager_type: barbican` to `user_variables.yml.j2`
-4. Deploy OSA config: `ansible-playbook playbooks/deploy_osa_config.yml`
-5. Run: `openstack-ansible /opt/openstack-ansible/playbooks/os-magnum-install.yml`
-6. Verify: `openstack coe service list` — should show magnum-conductor
-7. Verify Keystone: `openstack domain show magnum` — trust domain created
+4. Add `magnum_wsgi_processes: 2` and `magnum_conductor_workers: 2` to `user_variables.yml.j2` (OSA defaults to 8 each on cloud-4core — excessive for a home lab)
+5. Deploy OSA config: `ansible-playbook playbooks/deploy_osa_config.yml`
+6. Create LXC container: `openstack-ansible playbooks/lxc-containers-create.yml --limit magnum*`
+7. Run: `openstack-ansible /opt/openstack-ansible/playbooks/os-magnum-install.yml`
+8. Verify: `openstack coe service list` — should show magnum-conductor
+9. Verify Keystone: `openstack domain show magnum` — trust domain created
 
 **Step 2 — Install magnum-ui Horizon plugin:**
 
 Install `magnum-ui` and verify the Container Infra panel appears in Horizon.
 
+**Step 2.5 — Register `volumev3` Keystone service alias:**
+
+cinder-csi (gophercloud) looks for a `volumev3` service type in the Keystone catalog, but OpenStack 2025.2 only registers `block-storage`. Create an alias:
+
+```bash
+openstack service create --name cinderv3 --description "Cinder Volume Service v3 (alias for cinder-csi compatibility)" volumev3
+CINDER_URL="https://$(grep internal_lb_vip_address /etc/openstack_deploy/openstack_user_config.yml | awk '{print $2}'):8776/v3"
+for iface in public internal admin; do
+  openstack endpoint create --region RegionOne volumev3 $iface "$CINDER_URL"
+done
+```
+
+Verify: `openstack endpoint list --service volumev3` — should show 3 endpoints.
+
 **Step 3 — Upload Fedora CoreOS image and create cluster template:**
 
 1. Download and upload Fedora CoreOS image to Glance (with `os_distro=fedora-coreos`)
+
 2. Create a cluster template:
+
    ```bash
-   openstack coe cluster template create k8s-small \
-     --image fedora-coreos-38 \
-     --keypair <keypair> \
-     --external-network <ext-net> \
+   openstack coe cluster template create k8s-calico \
+     --image fedora-coreos-43 \
+     --keypair magnum-key \
+     --external-network provider-net \
      --dns-nameserver 8.8.8.8 \
-     --master-flavor m1.medium \
-     --flavor m1.small \
-     --network-driver flannel \
+     --master-flavor k8s.small \
+     --flavor k8s.small \
+     --network-driver calico \
      --volume-driver cinder \
-     --docker-volume-size 10 \
+     --docker-volume-size 30 \
      --coe kubernetes \
      --master-lb-enabled \
-     --labels flannel_backend=host-gw,container_runtime=containerd
+     --floating-ip-enabled \
+     --docker-storage-driver overlay2 \
+     --labels calico_ipv4pool=10.100.0.0/16,calico_ipv4pool_ipip=Off,calico_tag=v3.26.4,cgroup_driver=cgroupfs,container_runtime=containerd,kube_tag=v1.28.9-rancher1,containerd_version=1.7.25,containerd_tarball_sha256=6b987a57a3f2257ca2cc5f4697b481eec917bd2085299aeab0547d388ff8b983,cloud_provider_tag=v1.28.3,cinder_csi_plugin_tag=v1.28.3,k8s_keystone_auth_tag=v1.28.3
    ```
+
 3. Create a test cluster:
    ```bash
    openstack coe cluster create test-k8s \
@@ -2039,6 +2086,7 @@ Install `magnum-ui` and verify the Container Infra panel appears in Horizon.
      --master-count 1 \
      --node-count 1
    ```
+
 4. Wait for CREATE_COMPLETE, then:
    ```bash
    eval $(openstack coe cluster config test-k8s)
@@ -2046,30 +2094,45 @@ Install `magnum-ui` and verify the Container Infra panel appears in Horizon.
    kubectl get pods --all-namespaces
    ```
 
-#### Overlap with Zun (Phase 13)
+**Step 4 — Verify Magnum end-to-end:**
 
-| Concern | Zun | Magnum | Shared? |
-|---|---|---|---|
-| Docker/containerd on compute nodes | Yes — bare-metal Docker CE + containerd + Kata | No — container runtime is inside Nova VMs | **No overlap** |
-| Kuryr networking | Yes — kuryr-libnetwork bridges Docker to Neutron | No — flannel/calico inside cluster VMs | **No overlap** |
-| Horizon plugin | `zun-ui` | `magnum-ui` | Both optional, installed separately |
-| Heat dependency | No | **Yes — hard dependency** | Magnum only |
-| Octavia dependency | No | Optional (multi-master LB) | Magnum only |
-| Barbican | Optional | Recommended (cert storage) | Both can use |
-| Fedora CoreOS image | Not needed | Required in Glance | Magnum only |
-| Compute resource contention | Zun containers on bare metal | Magnum k8s VMs via Nova | **Both compete for compute resources** |
+1. Confirm Heat stack reached CREATE_COMPLETE: `openstack stack show $(openstack coe cluster show test-k8s -f value -c stack_id)`
+2. Confirm cluster VMs are ACTIVE: `openstack server list` — should show master and worker Nova instances
+3. Verify k8s API reachable: `kubectl get nodes` — all nodes should be Ready
+4. Verify system pods: `kubectl get pods -A` — coredns, calico, kube-proxy all Running
+5. Deploy a test workload:
 
-**Key insight:** Zun and Magnum have **almost no infrastructure overlap**. Zun modifies compute nodes (Docker, Kata, Kuryr); Magnum is control-plane only and runs k8s clusters as regular Nova VMs. They can coexist without conflicts. The main shared concern is **compute resource contention** — Zun containers and Magnum k8s VMs both consume Nova compute capacity on the same small nodes.
+   ```bash
+   kubectl create deployment nginx --image=nginx:alpine --replicas=2
+   kubectl expose deployment nginx --port=80 --type=NodePort
+   kubectl get pods -o wide   # should show 2 running pods
+   kubectl get svc nginx      # should show NodePort
+   ```
 
-#### Open questions for Magnum
+6. Clean up test workload: `kubectl delete deployment nginx && kubectl delete svc nginx`
+7. Delete test cluster: `openstack coe cluster delete test-k8s` — wait for DELETE_COMPLETE
+8. Verify Heat stack cleaned up: `openstack stack list` — test-k8s stack should be gone
 
-**Resolved:**
+**Known issues discovered during cluster bring-up:**
+
+1. **OpenStack integration image tags — Magnum defaults are ancient and don't exist in registries.** Magnum's Heat templates hardcode defaults: `cloud_provider_tag=v1.23.1`, `cinder_csi_plugin_tag=v1.23.0`, `k8s_keystone_auth_tag=v1.18.0`. These tags do **not** exist in `registry.k8s.io/provider-os/` (minimum available is v1.24.6). For K8s v1.28.9, the correct tag for all three is `v1.28.3`. **Fix:** Set `cloud_provider_tag=v1.28.3,cinder_csi_plugin_tag=v1.28.3,k8s_keystone_auth_tag=v1.28.3` as labels on the cluster template (already added to Step 3 above).
+
+2. **keystone-auth webhook chicken-and-egg.** kube-apiserver is configured with `--authorization-mode=Node,Webhook,RBAC` pointing to `k8s-keystone-auth` on port 8443. If the keystone-auth pod can't start (e.g., bad image tag + `imagePullPolicy: Always`), the webhook endpoint is unreachable and **all** API operations — including GET and the patches needed to fix the pod — are blocked. **Workaround if hit:** SSH into the master VM, edit `/etc/kubernetes/apiserver` to temporarily remove `Webhook` from `--authorization-mode` and comment out the `--authentication-token-webhook-config-file` / `--authorization-webhook-config-file` lines, restart kube-apiserver (`systemctl restart kube-apiserver`), apply fixes, then restore from backup (`apiserver.bak`).
+
+3. **cinder-csi `volumev3` service type required.** cinder-csi v1.28.3 uses gophercloud which looks for a `volumev3` service type in the Keystone catalog. OpenStack 2025.2 registers only `block-storage` as the service type (per the modern standard). Neither `bs-version=v3` nor `bs-version=auto` in the cloud-config helps — the endpoint discovery fails before the version negotiation. **Fix:** Register a `volumev3` service alias in Keystone (see prerequisite step below).
+
+4. **Podman image pulls stall inside FCOS VMs.** Container image pulls via podman (used by Heat software-config agent and etcd) frequently stall — `pigz -d` sits at 0.0% CPU for 10+ minutes. Affects `quay.io/coreos/etcd:v3.4.6` and other images. **Workaround:** Kill the stalled pull (`systemctl stop <service>`, `podman rm -f <container>`), then re-pull manually (`podman pull <image>`) — typically succeeds instantly on retry. Restart the service after.
+
+#### Resolved questions for Magnum
+
 - ~~Certificate manager~~ → **Barbican** (`magnum_cert_manager_type: barbican`)
-- ~~Octavia deploy or skip~~ → **Deploy first as Phase 13**, then enable `--master-lb-enabled`
-- ~~Heat deployment scope~~ → **Heat is already deployed**; just need to backfill `orchestration_hosts` in the IaC template
-- ~~magnum-ui Horizon plugin~~ → **Install**, together with `zun-ui`
-- ~~FCOS version for 2025.2~~ → **Use a recent stable FCOS build** (e.g., FCOS 40 or 41 stable). FCOS is independent of the Magnum/OpenStack version — it provides the base OS and containerd, while k8s components are pulled at boot time as container images (specified by labels). The "tested matrix" is a verified combo, not a hard compatibility boundary. FCOS maintains backward-compatible Ignition configs. Fall back to `fedora-coreos-38.20230806.3.0` if issues arise.
+
+- ~~FCOS version for 2025.2~~ → **FCOS 43** (`fedora-coreos-43.20260316.3.1`). FCOS 38 (the Dalmatian-tested image) ships containerd 1.4.4 which lacks CRI v1 support needed by kubelet v1.28+. Magnum's `install-cri.sh` downloads a containerd tarball specified by the `containerd_version` label and overwrites the system binary, so the FCOS version matters less than the label — but using a modern FCOS avoids other staleness issues. Confirmed working: FCOS 43 + `containerd_version=1.7.25`.
+
 - ~~k8s version / labels~~ → **Start with Dalmatian-tested labels** (`kube_tag=v1.28.9-rancher1`, etc.) as a known-good baseline. k8s version is independent of both FCOS and Magnum — it's set via `kube_tag` label on the cluster template and pulled at boot time as container images. Once the cluster works, experiment with newer k8s versions.
+
+- ~~containerd version~~ → **1.7.25** (latest 1.7.x series). Magnum defaults to `CONTAINERD_VERSION=1.4.4` which only supports CRI v1alpha2. kubelet v1.28+ requires CRI v1 (containerd >= 1.6). Set via `containerd_version=1.7.25` and `containerd_tarball_sha256=6b987a57a3f2257ca2cc5f4697b481eec917bd2085299aeab0547d388ff8b983` labels on the cluster template. The tarball is downloaded from GitHub at `https://github.com/containerd/containerd/releases/download/v{VERSION}/cri-containerd-cni-{VERSION}-linux-amd64.tar.gz`.
+
 - ~~Cluster node sizing~~ → **Three flavors** for Magnum clusters. Master needs etcd + apiserver so minimum 2 vCPU / 4GB. Workers scale with workload. Create these Nova flavors:
 
   | Flavor | vCPUs | RAM | Root Disk | Use case |
@@ -2085,8 +2148,12 @@ Install `magnum-ui` and verify the Container Infra panel appears in Horizon.
 - ~~CAPI driver future~~ → **Not tracking.** The Heat driver works today and is fully supported by OSA. If CAPI matures, it'll surface in OpenStack release notes / newsletters.
 
 - ~~External network & floating IPs~~ → **Already configured.** `provider-net` (`192.168.2.0/24`, flat on `physnet1`, `router:external=True`) is exactly what Magnum needs as `--external-network provider-net`. Floating IPs are allocated from the pool `192.168.2.100-.200` (101 addresses). A 3-node cluster uses ~4 floating IPs (3 nodes + 1 master LB VIP). `test-router` already provides NAT between tenant networks and the provider network.
-cgroupfs
+
 - ~~Network driver — flannel or calico?~~ → **Calico.** Magnum only supports `flannel` and `calico` as network drivers (no Cilium). Calico provides NetworkPolicy support for pod-level firewall rules, which is valuable for learning real-world Kubernetes networking. Requires `cgroup_driver=cgroupfs` (the default in Magnum). Uses BGP to distribute routes between nodes — no encapsulation overhead by default (`calico_ipv4pool_ipip=Off`). Labels: `calico_ipv4pool=10.100.0.0/16`, `calico_tag=v3.26.4` (from Dalmatian-tested set).
+
+- ~~OpenStack integration image tags~~ → **Must match K8s minor version.** Magnum's Heat templates default to `cloud_provider_tag=v1.23.1`, `cinder_csi_plugin_tag=v1.23.0`, `k8s_keystone_auth_tag=v1.18.0` — these tags don't exist in `registry.k8s.io/provider-os/`. For K8s v1.28.9, use `v1.28.3` for all three. Set via labels on the cluster template.
+
+- ~~cinder-csi endpoint discovery~~ → **Requires `volumev3` Keystone service alias.** cinder-csi (gophercloud) looks for `volumev3` service type but OpenStack 2025.2 only registers `block-storage`. Neither `bs-version=v3` nor `bs-version=auto` helps — the lookup fails before version negotiation. Fix: register a `volumev3` service alias in Keystone pointing to the same cinder endpoint URL (see Step 2.5).
 
 **All Magnum open questions resolved.**
 
@@ -2120,6 +2187,263 @@ For your 3-hypervisor setup, anti-affinity would naturally spread a 3-VM cluster
 That said, for a learning setup, it honestly doesn't matter if they land on the same hypervisor. The Kubernetes behavior is identical either way. Anti-affinity only matters when you care about surviving hardware failure — which isn't a concern for a lab where you're learning how the pieces fit together.
 
 If your goal is specifically to learn how providers offer managed Kubernetes, Magnum is the right tool. Just be aware it's a non-trivial deployment — it needs its own container images (Fedora CoreOS or Ubuntu with k8s pre-installed), a Heat stack under the hood, and integration with Barbican (for secrets) or at minimum certificate management. It's a project in itself on top of your existing cloud.
+
+### Phase 16 — Ceilometer + Gnocchi (Telemetry Data Collection)
+
+Ceilometer collects telemetry data (metrics and events) from all OpenStack services via `oslo.messaging` notifications and polling agents. It pushes metrics to **Gnocchi** (time-series database) and events to the message bus. Aodh (Phase 17) consumes this data for alarming.
+
+**Architecture:**
+
+- **Gnocchi** — time-series metric storage with a REST API (port 8041). Uses a **storage backend** for metric data (file, Swift, Ceph, S3) and **Galera** for the indexer database. Must be deployed first since Ceilometer publishes to it.
+
+- **Ceilometer central/notification agents** — run in an LXC container on cloud-4core. The notification agent listens to RabbitMQ for events from all services. The central (polling) agent polls APIs for metrics that aren't available via notifications (e.g., object-store stats).
+
+- **Ceilometer compute agent** — runs directly on each compute host (bare metal, not LXC) to poll hypervisor-level metrics (CPU, memory, disk, network for VMs via libvirt).
+
+**OSA roles:** `os_gnocchi`, `os_ceilometer` — fully automated. Deploy order: Gnocchi → Ceilometer.
+
+**Services created:**
+
+| Service | Port | Type | Container |
+|---|---|---|---|
+| Gnocchi API | 8041 | `metric` | `cloud-4core-gnocchi-container-*` (LXC) |
+| Gnocchi metricd | — | — | Same container (background worker) |
+| Ceilometer notification agent | — | — | `cloud-4core-ceilometer-central-container-*` (LXC) |
+| Ceilometer polling agent (central) | — | — | Same container |
+| Ceilometer polling agent (compute) | — | — | Bare metal on each compute host |
+
+**Host inventory needed** (`/etc/openstack_deploy/conf.d/`):
+
+- `metering-infra_hosts` → cloud-4core (central + notification agents, in LXC)
+- `metering-compute_hosts` → cloud-6core, cloud-celeron, cloud-eugene (compute polling agent, bare metal)
+- `metrics_hosts` → cloud-4core (Gnocchi, in LXC)
+
+#### What Ceilometer gives us
+
+- **VM resource metering** — CPU utilization, memory usage, disk I/O, network I/O for every Nova instance, collected every 600 seconds (default, configurable via `ceilometer_sample_interval`).
+- **Service event tracking** — instance create/delete/resize, volume attach/detach, image upload, network changes — everything that emits oslo.messaging notifications.
+- **Foundation for autoscaling** — Aodh alarms (Phase 17) + Heat auto-scaling groups use Ceilometer data to trigger scale-up/down.
+- **Usage/billing data** — if ever needed, Ceilometer + CloudKitty can produce cost reports.
+
+#### Implementation
+
+**Step 1 — Create conf.d host mappings:**
+
+Create `/etc/openstack_deploy/conf.d/gnocchi.yml`:
+
+```yaml
+metrics_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+Create `/etc/openstack_deploy/conf.d/ceilometer.yml`:
+
+```yaml
+metering-infra_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+
+metering-compute_hosts:
+  cloud-6core:
+    ip: 192.168.50.171
+  cloud-celeron:
+    ip: 192.168.50.178
+  cloud-eugene:
+    ip: 192.168.50.234
+```
+
+No `env.d/` files needed — OSA ships `ceilometer.yml`, `gnocchi.yml` in `inventory/env.d/` already.
+
+**Step 2 — Configure Gnocchi storage backend (user_variables.yml):**
+
+Add to `/etc/openstack_deploy/user_variables.yml`:
+
+```yaml
+# Gnocchi — use Swift for metric storage (already deployed)
+gnocchi_storage_driver: swift
+```
+
+The default `file` driver stores metrics on the container's local filesystem — fine for testing but fragile (data lost if container is recreated). Since Swift is already running on cloud-eugene, using it gives us durable metric storage with no extra infrastructure. The Galera indexer database is automatic.
+
+**Step 3 — Deploy Gnocchi:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-gnocchi-install.yml
+```
+
+This creates the Gnocchi LXC container on cloud-4core, sets up the Galera database, registers the Keystone `metric` service/endpoints, configures HAProxy, and starts gnocchi-api + gnocchi-metricd.
+
+Verify:
+
+```bash
+openstack metric status   # should show storage driver info
+openstack metric list     # empty initially
+```
+
+**Step 4 — Deploy Ceilometer:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-ceilometer-install.yml
+```
+
+This:
+
+- Creates the Ceilometer LXC container on cloud-4core (central + notification agents)
+- Installs ceilometer-polling on each compute host (bare metal)
+- Configures all OpenStack services' notification drivers to publish to RabbitMQ (Ceilometer's oslo.messaging listener picks them up)
+- Sets up the Gnocchi publisher so metrics flow to Gnocchi
+
+Verify:
+
+```bash
+# After a few minutes, metrics should start appearing
+openstack metric list
+openstack metric resource list
+
+# Check VM metrics (after at least one polling cycle = 600 seconds)
+openstack metric resource show <instance-uuid>
+openstack metric measures show --resource-id <instance-uuid> cpu
+```
+
+**Step 5 — Re-run Horizon to pick up any telemetry changes:**
+
+Note: OSA's Horizon role does **not** ship a `ceilometer-dashboard` or `gnocchi-grafana` plugin. Telemetry data is accessed via the `openstack metric` and `gnocchi` CLI commands, or by integrating with external Grafana (our Phase 14 monitoring stack has Grafana already).
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-horizon-install.yml
+```
+
+#### Secrets
+
+Already generated in `/etc/openstack_deploy/user_secrets.yml`:
+
+- `gnocchi_container_mysql_password`, `gnocchi_service_password`
+- `ceilometer_container_db_password`, `ceilometer_service_password`, `ceilometer_telemetry_secret`, `ceilometer_oslomsg_rpc_password`
+
+#### Ceilometer Open questions
+
+- ~~Gnocchi storage backend~~ → **Swift.** Already deployed, durable, zero extra infrastructure. Set `gnocchi_storage_driver: swift`.
+- ~~Horizon plugin?~~ → **None.** No `ceilometer-dashboard` in OSA's Horizon role. Use CLI or integrate with Grafana.
+- ~~Deploy order~~ → **Gnocchi first, then Ceilometer.** Ceilometer publishes to Gnocchi, so Gnocchi must exist first.
+- ~~Ceilometer compute agent~~ → **Automatic.** `metering-compute_hosts` in conf.d causes OSA to install the polling agent on each compute host as bare-metal service (not LXC). The `is_metal: true` flag in env.d handles this.
+
+### Phase 17 — Aodh (Telemetry Alarming)
+
+Aodh provides an alarming service that evaluates conditions against Gnocchi metrics and triggers actions (webhooks, log messages, trust-based actions). Depends on Ceilometer + Gnocchi being deployed first.
+
+**Architecture:**
+
+- **Aodh API** — REST API (port 8042, uWSGI behind HAProxy) for alarm CRUD.
+
+- **Aodh evaluator** — periodically evaluates alarm rules against Gnocchi metrics, transitions alarm state (ok → alarm → insufficient data).
+
+- **Aodh notifier** — fires actions when alarm state transitions (HTTP callback, log, trust-based actions like Heat auto-scaling).
+
+- **Aodh listener** — listens to Ceilometer events on RabbitMQ for event-based alarms.
+
+All four services run in a single LXC container on cloud-4core.
+
+**OSA role:** `os_aodh` — fully automated. Uses Galera for alarm storage.
+
+**Services created:**
+
+| Service | Port | Type | Container |
+|---|---|---|---|
+| Aodh API | 8042 | `alarming` | `cloud-4core-aodh-container-*` (LXC) |
+| Aodh evaluator | — | — | Same container |
+| Aodh notifier | — | — | Same container |
+| Aodh listener | — | — | Same container |
+
+**Host inventory needed** (`/etc/openstack_deploy/conf.d/`):
+
+- `metering-alarm_hosts` → cloud-4core
+
+#### What Aodh gives us
+
+- **Threshold alarms** — fire when a Gnocchi metric crosses a threshold (e.g., "alarm if average CPU > 80% over 5 minutes").
+
+- **Event alarms** — fire on specific Ceilometer events (e.g., "alarm when any instance is deleted").
+
+- **Composite alarms** — combine multiple sub-alarms with AND/OR logic.
+
+- **Heat auto-scaling integration** — Heat's `OS::Ceilometer::Alarm` resource type creates Aodh alarms that trigger `OS::Heat::ScalingPolicy` to add/remove instances from an auto-scaling group. This is the standard OpenStack auto-scaling pattern.
+
+#### Aodh Implementation
+
+**Step 1 — Create conf.d host mapping:**
+
+Create `/etc/openstack_deploy/conf.d/aodh.yml`:
+
+```yaml
+metering-alarm_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+**Step 2 — Deploy Aodh:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-aodh-install.yml
+```
+
+This creates the Aodh LXC container on cloud-4core, sets up the Galera `aodh` database, registers the Keystone `alarming` service/endpoints, configures HAProxy, and starts all four Aodh services.
+
+**Step 3 — Verify:**
+
+```bash
+# Check Aodh API is responding
+openstack alarm list   # should return empty list
+
+# Create a test threshold alarm
+openstack alarm create \
+  --name test-cpu-alarm \
+  --type gnocchi_resources_threshold \
+  --metric cpu \
+  --resource-type instance \
+  --aggregation-method mean \
+  --granularity 300 \
+  --evaluation-periods 3 \
+  --threshold 80000000000 \
+  --comparison-operator gt \
+  --alarm-action 'log://'
+
+# Check alarm state
+openstack alarm show test-cpu-alarm -c state -f value
+# Should show "insufficient data" initially (no metrics yet matching)
+
+# Clean up
+openstack alarm delete test-cpu-alarm
+```
+
+**Step 4 — Re-run HAProxy (if needed):**
+
+OSA's `os-aodh-install.yml` should update HAProxy automatically. If not:
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/haproxy-install.yml
+```
+
+#### Aodh Secrets
+
+Already generated in `/etc/openstack_deploy/user_secrets.yml`:
+
+- `aodh_container_db_password`, `aodh_service_password`, `aodh_oslomsg_rpc_password`, `aodh_oslomsg_notify_password`
+
+#### Deploy order summary (Phase 16 + 17)
+
+1. Create conf.d files (gnocchi.yml, ceilometer.yml, aodh.yml)
+2. Add gnocchi_storage_driver: swift to user_variables.yml
+3. os-gnocchi-install.yml        → Gnocchi API + metricd
+4. os-ceilometer-install.yml     → notification + polling agents
+5. os-aodh-install.yml           → alarming API + evaluator + notifier + listener
+6. os-horizon-install.yml        → pick up any service catalog changes
+7. Verify: openstack metric status, openstack metric list, openstack alarm list
 
 ### Phase ?? — Zaqar Messaging Service
 

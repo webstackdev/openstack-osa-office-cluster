@@ -1,6 +1,51 @@
 # Hardware Specifications
 
-Nova, Neutron, Keystone, Cinder, Swift
+## Network Topology
+
+```bash
+ISP (94.26.168.70)
+  │ WAN
+RT-AX58U (LAN: 192.168.50.1) ← management router
+  │ LAN ports → unmanaged hub
+  ├── workstation (.210)
+  ├── cloud-4core (.168)     ← Heat API, Keystone, etc.
+  ├── cloud-6core (.171)
+  ├── cloud-celeron (.178)
+  ├── cloud-eugene (.234)
+  └── RT-AC57U WAN (.111)    ← provider router
+        │ LAN (192.168.2.1)
+        └── provider flat network (physnet1)
+```
+
+The physical underlying interface for a provider network (such as one used for Geneve encapsulation) typically does not have an IP address assigned to it in the host's operating system.
+
+In an OpenStack configuration using Geneve (standard for OVN-based deployments), the networking works through two distinct layers:
+
+1. The Overlay Interface (Encapsulation IP)
+
+While the physical interface itself remains unaddressed to act as a Layer 2 bridge, your compute and controller nodes still require an Encapsulation IP assigned to a separate management or tunnel interface (often referred to as the local_ip or OVN Encap IP).
+
+- This IP is used to establish the Geneve tunnels between nodes.
+
+- This address is typically assigned to a virtual bridge (like br-phy or a management interface) rather than the raw physical NIC dedicated to provider traffic.
+
+2. The Provider Interface (Tenant-Configurable)
+
+For the specific interface that bridges your physical network to the virtual environment:
+
+- No IP Address: The physical NIC (e.g., eth1) should have no IP address assigned by the OS. It is often placed in promiscuous mode so it can pass all traffic to the virtual bridge (like br-ex or br-provider).
+
+- Bridge Mappings: You must map this physical interface to an Open vSwitch (OVS) bridge in your configuration (e.g., bridge_mappings = physnet1:br-ex).
+
+- Tenant Configuration: When a tenant creates a network on this provider segment, OpenStack handles the virtual IP assignments within that network's subnet. The physical host remains unaware of these tenant IPs.
+
+Summary Table
+
+Interface Type | IP Address Required? | Purpose |
+| --- | --- | --- |
+| Physical NIC | No | Acts as a raw pipe for L2 traffic into the OVS bridge. |
+| Encapsulation/Tunnel Interface | Yes | Used by OVN/Neutron to send Geneve-encapsulated traffic between hosts. |
+| Virtual Bridge (e.g., br-ex) | Optional | Only needs an IP if the host itself needs to communicate on that specific provider network (e.g., for management). |
 
 ## Hosts config
 
@@ -165,3 +210,48 @@ sda    465,8G   HDD disk (Ephemeral)
 ## Topology for Self Service Networks
 
 ![image-20250621034340176](/home/kevin/.config/Typora/typora-user-images/image-20250621034340176.png)
+
+## Containers Running on `cloud-4core`
+
+22 LXC containers (all control plane services). cloud-4core has 16 GB RAM, 8 threads (Xeon E31270).
+
+| Container | Service | Memory | Purpose |
+|---|---|---|---|
+| neutron-server-container | Neutron API (16 uWSGI workers) | 3,628 MB | Network API + ML2/OVN plugin |
+| nova-api-container | Nova API, conductor, scheduler, novncproxy | 1,772 MB | Compute API + orchestration |
+| zun-api-container | Zun API + wsproxy | 1,555 MB | Container service API |
+| octavia-server-container | Octavia API, worker, health-manager, housekeeping | 1,269 MB | Load Balancer as a Service |
+| keystone-container | Keystone (uWSGI) | 836 MB | Identity / auth |
+| heat-api-container | Heat API + engine | 771 MB | Orchestration |
+| rabbit-mq-container | RabbitMQ (beam.smp) | 717 MB | Message broker (oslo.messaging RPC) |
+| horizon-container | Horizon (Apache + mod_wsgi) | 674 MB | Web dashboard |
+| placement-container | Placement API (uWSGI) | 595 MB | Resource tracking |
+| designate-container | Designate API + central + worker + producer + mdns | 414 MB | DNS as a Service |
+| trove-api-container | Trove API + conductor + taskmanager | 374 MB | Database as a Service |
+| cinder-api-container | Cinder API + scheduler | 354 MB | Block Storage API |
+| galera-container | MariaDB (Galera single-node) | 246 MB | Database for all services |
+| glance-container | Glance API (uWSGI) | 204 MB | Image service |
+| manila-container | Manila API + scheduler | 178 MB | Shared Filesystems API |
+| zookeeper-container | Apache ZooKeeper (Java) | 175 MB | Designate coordination backend |
+| barbican-container | Barbican API (uWSGI) | 72 MB | Key Manager |
+| swift-proxy-container | Swift proxy-server | 62 MB | Object Storage proxy |
+| repo-container | OSA package repository | 58 MB | Internal pip/apt repo for LXC builds |
+| neutron-ovn-northd-container | OVN northd | 35 MB | OVN control plane daemon |
+| memcached-container | Memcached | 29 MB | Caching (Keystone tokens, etc.) |
+| utility-container | OSA utility (CLI tools) | 12 MB | Admin shell / openstack client |
+
+## Resource Planning
+
+Initial deployments had default number of uWSGI worker threads. Tuned to lower values for a home cloud.
+
+| Service | Current | Recommended | Rationale |
+|---|---|---|---|
+| Heat | 16 | 4 | Two uWSGI apps (api + cfn) both get this. Heat is rarely active. Should save ~500 MB. |
+| Keystone | 16 | 4 | Token validation is fast; 4 is plenty. Should save ~600 MB. |
+| Neutron | 16 | 4 | Biggest hog. 4 workers easily handles your load. Should save ~2.4 GB. |
+| Nova | 16 | 4 | Two uWSGI apps (compute + metadata) both get this. Should save ~1 GB. |
+| Octavia | 8 | 2 | ~0.8 GB |
+| Placement | 8 | 4 | Already lower; halving still saves ~300 MB. |
+| Trove API | 8 | 2 | trove_api_workers	~0.1 GB |
+| Trove conductor | 8 | 2 | trove_conductor_workers	~0.1 GB |
+| Zun | 16 | 2 | ~1.1 GB |

@@ -19,6 +19,9 @@
       - python-manilaclient
       - python-designateclient
       - python-troveclient
+      - python-octaviaclient
+      - python-zunclient
+      - python-magnumclient
       - osc-placement
 
   tasks:
