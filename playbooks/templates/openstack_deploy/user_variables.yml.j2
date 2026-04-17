@@ -325,3 +325,11 @@ magnum_cert_manager_type: barbican
 magnum_config_overrides:
   drivers:
     openstack_ca_file: /usr/local/share/ca-certificates/ExampleCorpRoot.crt
+
+# ============================================================================
+# Security hardening (ansible-hardening role)
+# ============================================================================
+# Override STIG V-72241 default (ClientAliveCountMax 0) which kills SSH
+# sessions after a single missed keepalive. Use a reasonable value instead.
+security_sshd_client_alive_interval: 60
+security_sshd_client_alive_count_max: 3

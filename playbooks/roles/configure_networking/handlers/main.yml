@@ -11,6 +11,13 @@
     daemon_reload: true
     state: started
 
+- name: Enable mgmtnet-veth-bridge service
+  ansible.builtin.systemd:
+    name: mgmtnet-veth-bridge.service
+    enabled: true
+    daemon_reload: true
+    state: started
+
 - name: Enable provider-bridge-eth12 service
   ansible.builtin.systemd:
     name: provider-bridge-eth12.service

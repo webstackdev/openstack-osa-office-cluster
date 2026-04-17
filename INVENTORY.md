@@ -1,5 +1,10 @@
 # Hardware Specifications
 
+Liam Li A3-mATX Case
+
+- 2 × 2.5" SSD on PSU mounting plate
+- 1 × 2.5" SSD or 1 × 3.5" HDD at bottom of chassis
+
 ## Network Topology
 
 ```bash

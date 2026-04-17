@@ -173,78 +173,7 @@ sudo ip netns exec "$NETNS" ssh -i /tmp/magnum_key core@<vm-fixed-ip>
 
 ## Known issues
 
-1. **Podman image pulls stall inside FCOS VMs.** Pulls via podman (for etcd, heat-container-agent) can hang — `pigz -d` at 0% CPU for 10+ min. Kill the stalled pull, re-pull manually, restart the service.
-
-2. **keystone-auth webhook chicken-and-egg.** If `k8s-keystone-auth` can't start, the kube-apiserver Webhook authorization blocks ALL API calls. Workaround: SSH into master, edit `/etc/kubernetes/apiserver` to remove `Webhook` from `--authorization-mode`, restart apiserver, fix the issue, restore from `apiserver.bak`.
-
-## Why podman pull stalls
-
-The network configuration is actually correct — Neutron sets the geneve tenant network MTU to 1442, the VM's ens3 gets MTU 1442, and TCP negotiates MSS 1390. There's no PMTUD black hole for TCP traffic (ping tests to 8.8.8.8 confirm the path works up to 1414-byte payloads, exactly 1442 with headers).
-
-The stall is an intermittent Docker Hub pull issue through podman during early VM boot. The symptom is pigz -d (the decompressor) sitting at 0% CPU waiting for data that never arrives — meaning the HTTP/TLS stream from Docker Hub's CDN stalled mid-transfer. Killing the process and re-pulling works instantly (likely hits a different CDN edge or TCP connection).
-
-**Contributing factors:**
-
-- Network isn't instantly stable at boot (OVN flow rules still propagating)
-
-- Podman's pull has poor timeout / retry for stalled connections
-
-- Docker Hub CDN is flaky for long-distance pulls through tunnel networks
-
-- The `heat-container-agent.service` has `TimeoutStartSec=10min` but no `Restart=on-failure`, so if the install eventually times out, the service just dies and never retries
-
-**How to fix it**
-
-The right fix is to stop pulling from Docker Hub during boot entirely. Magnum supports two labels for this:
-
-1. `container_infra_prefix` — prefix for all container image pulls (heat-container-agent, hyperkube, calico, dashboard, etc.). Default: docker.io/openstackmagnum/ for heat-container-agent, various registries for others.
-
-2. `heat_container_agent_tag` — tag for `heat-container-agent`. Default: `wallaby-stable-1`.
-
-The approach: run a local Docker registry as a pull-through cache, then set `container_infra_prefix` to point to it. This means the first cluster creation fetches images from the internet and caches them locally; all subsequent creates are instant local pulls.
-
-The systemd service in the ignition config looks like:
-
-```bash
-ExecStartPre=-/bin/podman pull __CONTAINER_INFRA_PREFIX__heat-container-agent:__HEAT_CONTAINER_AGENT_TAG__
-ExecStart=/bin/podman run ... __CONTAINER_INFRA_PREFIX__heat-container-agent:__HEAT_CONTAINER_AGENT_TAG__ ...
-```
-
-So `container_infra_prefix=192.168.50.168:5000/openstackmagnum/` would redirect all pulls to a local registry on cloud-4core.
-
-However, `container_infra_prefix` only controls some images (`heat-container-agent`, and images that use `$CONTAINER_INFRA_PREFIX` in the boot scripts). Rancher hyperkube, calico, registry.k8s.io images, etc. are controlled by separate labels or hardcoded. A pull-through cache would need to be configured as a containerd mirror, not just via this label.
-
-The simplest practical approach for your home lab would be a local registry with pre-pushed images — Push all needed images (heat-container-agent, hyperkube, calico, etc.) to a local registry, set all the labels to point there.
-
-**Registry server options**
-
-| Registry | Description | Storage backends |
-| --- | --- | --- |
-| Docker Distribution (aka registry:2) | The reference implementation. Minimal, no UI. Most common for "just a local mirror." | Local filesystem, S3, Azure Blob, GCS, Swift, in-memory |
-| Harbor | CNCF graduated project. Adds RBAC, vulnerability scanning (Trivy), replication, UI, audit logs. | Delegates to an underlying registry:2 instance; storage same as above (filesystem, S3, Swift, etc.) |
-
-For your setup, `registry:2` (Docker Distribution) is the simplest choice. It's a single container, trivially runs on the deployment host or cloud-4core, and can back to local filesystem or Swift (which you already have on cloud-eugene). A basic deployment is:
-
-```bash
-podman run -d -p 5000:5000 \
-  -v /srv/registry:/var/lib/registry \
-  --name registry \
-  docker.io/library/registry:2
-```
-
-Then you pre-push images:
-
-```bash
-podman pull quay.io/coreos/hyperkube:v1.28.x
-podman tag quay.io/coreos/hyperkube:v1.28.x localhost:5000/hyperkube:v1.28.x
-podman push localhost:5000/hyperkube:v1.28.x
-```
-
-And point your Magnum/Heat templates to `<registry-host>:5000/` instead of upstream registries.
-
-Harbor would only be worth it if you want a UI, vulnerability scanning, or multi-user access control — probably overkill for a home lab.
-
-Want me to implement one of these? Option A (local registry) is the most robust and eliminates the problem entirely. I can set up a Docker registry on cloud-4core (or the deployment host) and calculate the full set of labels needed.
+1. **keystone-auth webhook chicken-and-egg.** If `k8s-keystone-auth` can't start, the kube-apiserver Webhook authorization blocks ALL API calls. Workaround: SSH into master, edit `/etc/kubernetes/apiserver` to remove `Webhook` from `--authorization-mode`, restart apiserver, fix the issue, restore from `apiserver.bak`.
 
 ## Pods on a Cluster Deploy
 
@@ -284,6 +213,12 @@ You'll need a token to log in:
 
 ```bash
 kubectl -n kube-system create token kubernetes-dashboard
+```
+
+Kuberntes command to get ingress:
+
+```bash
+kubectl get ingress -A -o yaml
 ```
 
 ## What defines the pod set?

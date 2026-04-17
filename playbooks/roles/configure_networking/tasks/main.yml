@@ -144,7 +144,7 @@
     mode: "0644"
     content: |
       [Unit]
-      Description=Create veth pair bridging OVS br-storage and Linux br-storage for Octavia
+      Description=Create veth pair bridging OVS ovs-storage and Linux br-storage for Octavia
       After=openvswitch-switch.service NetworkManager.service
       Requires=openvswitch-switch.service
       ConditionPathExists=/usr/bin/ovs-vsctl
@@ -153,12 +153,12 @@
       Type=oneshot
       RemainAfterExit=yes
       ExecStart=/bin/bash -c '\
-        ovs-vsctl --may-exist add-br br-storage -- set bridge br-storage fail_mode=standalone 2>/dev/null || true; \
+        ovs-vsctl --may-exist add-br ovs-storage -- set bridge ovs-storage fail_mode=standalone 2>/dev/null || true; \
         ip link show veth-stor-ovs >/dev/null 2>&1 || ip link add veth-stor-lnx type veth peer name veth-stor-ovs; \
         ip link set veth-stor-lnx up; \
         ip link set veth-stor-ovs up; \
         ip link set veth-stor-lnx master br-storage 2>/dev/null || true; \
-        ovs-vsctl --may-exist add-port br-storage veth-stor-ovs 2>/dev/null || true'
+        ovs-vsctl --may-exist add-port ovs-storage veth-stor-ovs 2>/dev/null || true'
 
       [Install]
       WantedBy=multi-user.target
@@ -175,12 +175,58 @@
 - name: Create veth pair now if OVS is available
   ansible.builtin.shell: |
     set -e
-    ovs-vsctl --may-exist add-br br-storage -- set bridge br-storage fail_mode=standalone 2>/dev/null || true
+    ovs-vsctl --may-exist add-br ovs-storage -- set bridge ovs-storage fail_mode=standalone 2>/dev/null || true
     ip link show veth-stor-ovs >/dev/null 2>&1 || ip link add veth-stor-lnx type veth peer name veth-stor-ovs
     ip link set veth-stor-lnx up
     ip link set veth-stor-ovs up
     ip link set veth-stor-lnx master br-storage 2>/dev/null || true
-    ovs-vsctl --may-exist add-port br-storage veth-stor-ovs 2>/dev/null || true
+    ovs-vsctl --may-exist add-port ovs-storage veth-stor-ovs 2>/dev/null || true
+  when:
+    - is_compute | default(false)
+    - configure_networking_ovs_check.rc == 0
+  changed_when: false
+
+# --- Mgmtnet flat provider network (OVS ovs-mgmt ↔ Linux br-mgmt) ---
+# OSA creates an OVS bridge called ovs-mgmt for the mgmtnet provider network.
+# A veth pair connects it to the Linux br-mgmt so OVN flat provider traffic
+# can reach the management L2.
+
+- name: Deploy mgmtnet-veth-bridge systemd service on compute nodes
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mgmtnet-veth-bridge.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Create veth pair bridging OVS ovs-mgmt and Linux br-mgmt for mgmtnet
+      After=openvswitch-switch.service NetworkManager.service
+      Requires=openvswitch-switch.service
+      ConditionPathExists=/usr/bin/ovs-vsctl
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/bash -c '\
+        ovs-vsctl --may-exist add-br ovs-mgmt -- set bridge ovs-mgmt fail_mode=standalone 2>/dev/null || true; \
+        ip link show veth-mgmt-ovs >/dev/null 2>&1 || ip link add veth-mgmt-lnx type veth peer name veth-mgmt-ovs; \
+        ip link set veth-mgmt-lnx up; \
+        ip link set veth-mgmt-ovs up; \
+        ip link set veth-mgmt-lnx master br-mgmt 2>/dev/null || true; \
+        ovs-vsctl --may-exist add-port ovs-mgmt veth-mgmt-ovs 2>/dev/null || true'
+
+      [Install]
+      WantedBy=multi-user.target
+  when: is_compute | default(false)
+  notify: Enable mgmtnet-veth-bridge service
+
+- name: Create mgmtnet veth pair now if OVS is available
+  ansible.builtin.shell: |
+    set -e
+    ovs-vsctl --may-exist add-br ovs-mgmt -- set bridge ovs-mgmt fail_mode=standalone 2>/dev/null || true
+    ip link show veth-mgmt-ovs >/dev/null 2>&1 || ip link add veth-mgmt-lnx type veth peer name veth-mgmt-ovs
+    ip link set veth-mgmt-lnx up
+    ip link set veth-mgmt-ovs up
+    ip link set veth-mgmt-lnx master br-mgmt 2>/dev/null || true
+    ovs-vsctl --may-exist add-port ovs-mgmt veth-mgmt-ovs 2>/dev/null || true
   when:
     - is_compute | default(false)
     - configure_networking_ovs_check.rc == 0

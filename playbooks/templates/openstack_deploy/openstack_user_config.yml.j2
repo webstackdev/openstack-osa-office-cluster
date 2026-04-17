@@ -73,6 +73,10 @@ global_overrides:
           - neutron_ovn_controller
     # Trove DBaaS management: flat provider network on br-mgmt so guest VMs
     # can reach RabbitMQ (192.168.50.82) directly on the management L2.
+    # host_bind_override must NOT be "br-mgmt" — that collides with the
+    # Linux bridge of the same name. OSA creates an OVS bridge from this
+    # value; a veth pair (mgmtnet-veth-bridge.service) connects ovs-mgmt
+    # to the Linux br-mgmt.
     # is_management_address is required by OSA inventory for any network on
     # the management bridge; safe here because it just re-sets ansible_host
     # and management_address to the same values the first br-mgmt entry set.
@@ -80,7 +84,7 @@ global_overrides:
         container_bridge: "br-mgmt"
         container_type: "veth"
         container_interface: "eth13"
-        host_bind_override: "br-mgmt"
+        host_bind_override: "ovs-mgmt"
         type: "flat"
         net_name: "mgmtnet"
         group_binds:
@@ -101,12 +105,14 @@ global_overrides:
     # Octavia amphora management network — VLAN 232 on the storage bridge.
     # cloud-4core has no OVS; a Linux br-lbaas with VLAN sub-interface
     # (br-storage.232) provides L2 to compute nodes via the storage hub.
-    # On compute nodes, OVN adds lbaas:br-storage to ovn-bridge-mappings.
+    # host_bind_override must NOT be "br-storage" — that collides with the
+    # Linux bridge. A veth pair (octavia-veth-bridge.service) connects
+    # ovs-storage to the Linux br-storage.
     - network:
         container_bridge: "br-lbaas"
         container_type: "veth"
         container_interface: "eth14"
-        host_bind_override: "br-storage"
+        host_bind_override: "ovs-storage"
         ip_from_q: "lbaas"
         type: "vlan"
         range: "232:232"

@@ -186,7 +186,7 @@ Playbook: `playbooks/verify_openstack.yml`
 
 **Current state:** Logs are scattered across cloud-4core's 16 LXC containers (`/var/log/nova/`, `/var/log/neutron/`, etc.), plus HAProxy / host syslog on each node, and nova-compute / OVN / OVS logs on the three compute nodes.
 
-#### Architecture
+#### Observability Architecture
 
 All components run on **cloud-4core** (infrastructure node). Promtail and node_exporter run on every node.
 
@@ -278,7 +278,7 @@ scrape_configs:
 - Import Node Exporter Full dashboard (Grafana ID 1860)
 - Import HAProxy dashboard if stats endpoint is enabled
 
-#### Implementation Plan
+#### Observability Implementation Plan
 
 | Step | Task | Target |
 |------|------|--------|
@@ -294,7 +294,7 @@ scrape_configs:
 | 10 | Import dashboards (Node Exporter Full, log explorer) | cloud-4core |
 | 11 | Smoke test: query logs in Grafana, check node metrics graphs | Grafana UI |
 
-#### Versions (pinned)
+#### Observability Versions (pinned)
 
 - Loki: 3.4.x (latest stable)
 - Promtail: 3.4.x (matches Loki)
@@ -436,7 +436,7 @@ openstack-ansible playbooks/os-cinder-install.yml --tags cinder-config
 openstack-ansible playbooks/os-nova-install.yml --tags nova-config
 ```
 
-#### What OSA handles automatically
+#### Manila What OSA handles automatically
 
 - LXC container creation and networking
 - Galera database and user
@@ -503,7 +503,7 @@ The LVM share driver creates logical volumes on `manila-shares` VG and exports t
 - **Export IP**: `192.168.50.168` (cloud-4core management IP) — tenants mount shares from this IP
 - Keystone endpoint registered automatically by the OSA role
 
-#### Implementation Steps
+#### Manila Implementation Steps
 
 **Step 1 — Prepare /dev/sdb for LVM**
 
@@ -704,7 +704,7 @@ BIND9 is the simplest backend for a single-node deployment. It runs inside the D
 
 **We must install BIND9 (`bind9` package) ourselves** inside the container — the OSA role only installs `bind9utils`, not the server. This is a one-time step after container creation.
 
-#### Implementation Steps
+#### Designate Implementation Steps
 
 **Step 1 — Add `dnsaas_hosts` to `openstack_user_config.yml.j2`**
 
@@ -931,7 +931,7 @@ openstack --os-cloud home-cloud recordset delete home.cloud. testvm.home.cloud.
 openstack --os-cloud home-cloud zone delete home.cloud.
 ```
 
-#### What OSA handles automatically
+#### Designate What OSA handles automatically
 
 - LXC container creation and networking
 - Galera database and user
@@ -944,14 +944,14 @@ openstack --os-cloud home-cloud zone delete home.cloud.
 - Horizon plugin auto-enablement (`designate-dashboard`)
 - Neutron `[designate]` config section and `external_dns_driver = designate` (when `designate_all` group exists)
 
-#### What we must handle manually
+#### Designate What we must handle manually
 
 - **BIND9 server installation** inside the container (`apt-get install bind9`) — OSA only installs `bind9utils`
 - **BIND9 `named.conf` configuration** — `allow-new-zones yes`, rndc controls, key include
 - **rndc key generation** — `rndc-confgen -a -A hmac-sha256` → paste secret into `user_variables.yml.j2`
 - **Neutron re-run** if DNS integration is desired (to pick up `dns` extension driver)
 
-#### No custom env.d needed
+#### Designate No custom env.d needed
 
 The built-in `env.d/designate.yml` mapping handles everything: all 6 services run inside a single `designate_container` LXC. No bare-metal components needed (unlike Manila or Cinder LVM).
 
@@ -996,7 +996,7 @@ Trove is DBaaS — it doesn't share the infrastructure MariaDB (Galera) or insta
 4. The guest agent inside the VM pulls a **Docker container image** for the requested database engine (MySQL, MariaDB, PostgreSQL, etc.) from Docker Hub or a private registry
 5. The guest agent manages the database lifecycle (create/delete databases and users, backups, restores, configuration changes) via RPC over RabbitMQ
 
-```
+```bash
                           ┌──────────────────── cloud-4core (LXC) ────────────────────┐
                           │                                                            │
   Tenant / CLI ──HTTPS──▶│  HAProxy :8779 ──▶ trove-api                               │
@@ -1321,8 +1321,8 @@ openstack --os-cloud home-cloud database db list test-pg
 openstack --os-cloud home-cloud database instance delete test-mariadb
 openstack --os-cloud home-cloud database instance delete test-pg
 ```
-testdb
-#### What OSA handles automatically
+
+#### Trove - What OSA handles automatically
 
 - LXC container creation and networking
 - Galera database (`trove`) and user
@@ -1449,6 +1449,7 @@ OSA expects this as a **provider network** (flat or VLAN) with a bridge on the c
 #### Amphora image
 
 The role downloads a test amphora image by default:
+
 - URL: `http://tarballs.openstack.org/octavia/test-images/test-only-amphora-x64-haproxy-ubuntu-noble.qcow2`
 - `octavia_download_artefact: true` (default) — auto-downloads and uploads to Glance
 - Tagged `octavia-amphora-image` in Glance
@@ -1458,6 +1459,7 @@ The role downloads a test amphora image by default:
 #### Amphora compute resources
 
 The role auto-creates:
+
 - **Nova flavor:** `m1.amphora` — 1 vCPU, 1024MB RAM, 20GB disk
 - **SSH keypair:** `octavia_key` (SSH disabled by default; enable with `octavia_ssh_enabled: true` for debugging)
 - **Security group:** `octavia_sec_grp` with rules for agent (TCP 9443), heartbeat (UDP 5555), ICMP
@@ -1465,6 +1467,7 @@ The role auto-creates:
 #### Certificates
 
 Octavia uses mutual TLS between the control plane and amphora VMs. The role auto-generates self-signed certificates:
+
 - **Server CA** (`OctaviaServerRoot`) — signs amphora server certificates
 - **Client CA** (`OctaviaClientRoot`) — signs control plane client certificates
 - **OVN certificates** — for SSL communication with OVN NB/SB databases
@@ -1624,6 +1627,7 @@ Unlike Zaqar, OSA ships a complete `os_zun` role with playbook, env.d, HAProxy i
 | `containerd` | compute nodes | Bare metal | Container runtime (for Kata support) |
 
 **Dependencies (all existing):**
+
 - Keystone — authentication
 - Neutron — container networking via Kuryr
 - Placement — resource tracking and claims
@@ -1632,9 +1636,9 @@ Unlike Zaqar, OSA ships a complete `os_zun` role with playbook, env.d, HAProxy i
 - HAProxy — frontend for zun-api and zun-wsproxy
 - Optional: Glance (container image caching), Cinder (container volumes), Heat (orchestration)
 
-#### Architecture for this cluster
+#### Zun Architecture for this cluster
 
-```
+```bash
                          ┌──────────── cloud-4core ────────────┐
                          │                                     │
    Tenant / CLI ──────▶ │  HAProxy :9517 (zun-api)            │
@@ -1667,7 +1671,7 @@ Unlike Zaqar, OSA ships a complete `os_zun` role with playbook, env.d, HAProxy i
 
 Zun runs `zun-compute` on all compute nodes **alongside Nova** — controlled by `host_shared_with_nova = true` in the config. The `os_zun` role installs Docker CE, containerd, Kata Containers, Kuryr-libnetwork, and the CNI plugin directly on the host (bare metal, not in LXC).
 
-#### Key configuration variables
+#### Zun Key configuration variables
 
 ```yaml
 # openstack_user_config.yml — add these sections:
@@ -1700,7 +1704,7 @@ zun_zun_conf_overrides:
 # zun_kata_enabled: "False"
 ```
 
-#### Deployment plan
+#### Zun Deployment plan
 
 **Step 0 — Pre-checks** ✅
 
@@ -1862,7 +1866,7 @@ Key capabilities:
 - Auto-healing and auto-scaling (optional)
 - `kubectl` access via `eval $(openstack coe cluster config <name>)`
 
-#### OSA support status
+#### Magnum OSA support status
 
 OSA has **full Magnum support**:
 
@@ -1874,7 +1878,7 @@ OSA has **full Magnum support**:
 | Secrets | Pre-generated in `user_secrets.yml`: `magnum_galera_password`, `magnum_oslomsg_rpc_password`, `magnum_service_password`, `magnum_trustee_password` |
 | HAProxy | Role includes haproxy service definitions for port 9511 |
 
-#### Architecture for this cluster
+#### Magnum Architecture for this cluster
 
 ```bash
                     ┌─────────── cloud-4core ────────────┐
@@ -2003,12 +2007,13 @@ From `os_magnum` role defaults:
 #### IaC changes needed
 
 1. **`openstack_user_config.yml.j2`** — add host groups:
+
    ```yaml
    # Backfill: Heat (Orchestration) — already deployed, syncing IaC with reality
    orchestration_hosts:
      mgmt.cloud-4core.local:
        ip: 192.168.50.168
-   
+
    # Phase 15: Magnum (Container Infrastructure Management)
    magnum-infra_hosts:
      mgmt.cloud-4core.local:
@@ -2016,6 +2021,7 @@ From `os_magnum` role defaults:
    ```
 
 2. **`user_variables.yml.j2`** — add Magnum overrides:
+
    ```yaml
    # Phase 15: Magnum
    magnum_cert_manager_type: barbican
@@ -2023,7 +2029,7 @@ From `os_magnum` role defaults:
 
 3. **Playbooks** — no new playbook needed (use OSA's `os-heat-install.yml` and `os-magnum-install.yml`). Could add a `deploy_magnum.yml` wrapper for consistency.
 
-#### Deployment plan
+#### Magnum Deployment plan
 
 **Step 1 — Deploy Magnum:**
 
@@ -2094,7 +2100,7 @@ Verify: `openstack endpoint list --service volumev3` — should show 3 endpoints
    kubectl get pods --all-namespaces
    ```
 
-**Step 4 — Verify Magnum end-to-end:**
+   **Step 4 — Verify Magnum end-to-end:**
 
 1. Confirm Heat stack reached CREATE_COMPLETE: `openstack stack show $(openstack coe cluster show test-k8s -f value -c stack_id)`
 2. Confirm cluster VMs are ACTIVE: `openstack server list` — should show master and worker Nova instances
@@ -2225,7 +2231,7 @@ Ceilometer collects telemetry data (metrics and events) from all OpenStack servi
 - **Foundation for autoscaling** — Aodh alarms (Phase 17) + Heat auto-scaling groups use Ceilometer data to trigger scale-up/down.
 - **Usage/billing data** — if ever needed, Ceilometer + CloudKitty can produce cost reports.
 
-#### Implementation
+#### Ceilometer Implementation
 
 **Step 1 — Create conf.d host mappings:**
 
@@ -2435,16 +2441,6 @@ Already generated in `/etc/openstack_deploy/user_secrets.yml`:
 
 - `aodh_container_db_password`, `aodh_service_password`, `aodh_oslomsg_rpc_password`, `aodh_oslomsg_notify_password`
 
-#### Deploy order summary (Phase 16 + 17)
-
-1. Create conf.d files (gnocchi.yml, ceilometer.yml, aodh.yml)
-2. Add gnocchi_storage_driver: swift to user_variables.yml
-3. os-gnocchi-install.yml        → Gnocchi API + metricd
-4. os-ceilometer-install.yml     → notification + polling agents
-5. os-aodh-install.yml           → alarming API + evaluator + notifier + listener
-6. os-horizon-install.yml        → pick up any service catalog changes
-7. Verify: openstack metric status, openstack metric list, openstack alarm list
-
 ### Phase 18 — Mistral Workflow Service
 
 Mistral provides a workflow-as-a-service engine that lets users define multi-step task graphs (workflows) in a YAML-based DSL. Workflows can orchestrate OpenStack API calls, run arbitrary actions, and integrate with other services. Depends on RabbitMQ, Galera, and Keystone being deployed. Mistral can be used for CRON. Similar to AWS Step Functions.
@@ -2625,9 +2621,511 @@ Installed automatically in the utility container when `utility-install.yml` is r
 6. Update Grafana dashboard with Mistral log queries
 7. Verify: `openstack workflow list`, `openstack catalog show workflowv2`
 
-## Phase 19 - Adjutant
+### Phase 19 — Implement Harbor Image Repository
 
-(Adjutant) Basic workflow service [(documentation)](https://docs.openstack.org/adjutant/latest/) [(dashboard)](https://opendev.org/openstack/adjutant-ui)
+Running Docker Distribution on cloud-4core with /dev/sdc
+
+Current state of cloud-4core
+
+| Resource                  | Value                                                    | Concern?                                           |
+| ------------------------- | -------------------------------------------------------- | -------------------------------------------------- |
+| **RAM**                   | 15 GB total, 12 GB used, 3.4 GB available                | Tight but manageable — `registry:2` uses ~30-50 MB |
+| **Swap**                  | 24 GB, 15.4 GB used                                      | Heavy swap pressure already                        |
+| **Root disk** (/dev/sdd2) | 117 GB, 98 GB used, **13 GB free (89%)**                 | Critical — no room for registry data here          |
+| **CPU**                   | 8 threads (Xeon E31270)                                  | Fine — registry is I/O bound, not CPU              |
+| **Docker**                | v29.4.0 + Compose v5.1.1, running, nearly empty (492 KB) | Ready to use                                       |
+| **LXC containers**        | 28 (control plane)                                       | Already hosting everything                         |
+| **/dev/sdc**              | 119.2 GB SSD, XFS, **unmounted, empty** (117 GB free)    | Perfect candidate                                  |
+
+Why this works despite the tight system
+The registry:2 container is extremely lightweight:
+
+~30 MB RAM at idle, ~50-100 MB under load (it's a single Go binary)
+Negligible CPU — serves blobs over HTTP, mostly just disk I/O
+No database — metadata is stored as files alongside blobs on the filesystem
+Single container — vs Harbor's 9 containers + PostgreSQL + Redis
+The key insight is that the root disk problem is solved by using /dev/sdc — the registry data never touches /dev/sdd2. Docker daemon itself is only 492 KB on the root disk; the registry:2 image is ~25 MB. The registry's persistent data (all the container images) would be a bind-mounted volume on /dev/sdc.
+
+Partition plan for /dev/sdc (119.2 GB SSD)
+
+| Partition   | Size       | Filesystem | Mount           | Purpose                           |
+| ----------- | ---------- | ---------- | --------------- | --------------------------------- |
+| `/dev/sdc1` | **100 GB** | ext4       | `/srv/registry` | Docker Distribution image storage |
+| `/dev/sdc2` | **~19 GB** | ext4       | `/srv/mongodb`  | MongoDB for Freezer metadata      |
+
+Why 100 GB for the registry:
+
+Realistic image storage estimate for your home lab:
+
+| Image set                                                    | Compressed size |
+| ------------------------------------------------------------ | --------------- |
+| Magnum K8s stack (heat-container-agent, hyperkube, calico, coredns, dashboard, etcd, flannel, pause) | ~2-4 GB         |
+| Multiple K8s versions (keep 2-3 versions)                    | ~6-12 GB        |
+| Zun base images (if you pre-cache common ones)               | ~2-5 GB         |
+| Custom project images                                        | ~5-10 GB        |
+| **Realistic total**                                          | **~15-30 GB**   |
+| **With generous headroom**                                   | **< 50 GB**     |
+
+100 GB gives you 3-6x headroom over realistic usage. Container images compress aggressively (layers are gzipped), so even a large collection of images rarely exceeds 50 GB in a home lab.
+
+Why 19 GB for MongoDB:
+
+Freezer is a backup service — MongoDB stores only backup metadata (job definitions, session records, client registrations), not the actual backup data. MongoDB metadata for Freezer would typically be < 1 GB even with heavy use. 19 GB is extreme overkill but uses the remainder of the drive. This could also serve other future metadata needs.
+
+Comparison: Docker Distribution on cloud-4core vs Harbor on workstation
+
+| Factor             | registry:2 on cloud-4core                                    | Harbor on workstation                              |
+| ------------------ | ------------------------------------------------------------ | -------------------------------------------------- |
+| RAM impact         | ~50 MB                                                       | ~2-4 GB (9 containers + PostgreSQL + Redis)        |
+| Disk               | Dedicated SSD partition                                      | Shares workstation root disk                       |
+| Networking         | Already on management network (192.168.50.168) — no secondary IP needed | Needs secondary IP (.201)                          |
+| Features           | No UI, no scanning, no RBAC                                  | Full UI, Trivy scanning, RBAC, audit logs          |
+| Complexity         | 1 container, 1 bind mount, trivial                           | 9 containers, TLS certs, docker-compose, installer |
+| Port               | 5000 (non-standard — clients need `192.168.50.168:5000`)     | 443 (standard — clean `harbor.home.local/img`)     |
+| Reliability        | On a box with 89% disk usage and heavy swap                  | On a box with 58% disk and abundant RAM            |
+| Magnum integration | `container_infra_prefix=192.168.50.168:5000/magnum/`         | `container_infra_prefix=harbor.home.local/magnum/` |
+
+The real trade-off
+registry:2 on cloud-4core is simpler and lighter but:
+
+No web UI (you manage images entirely via docker push/docker pull and the HTTP API)
+No vulnerability scanning (no Trivy)
+Port 5000 makes client config slightly noisier
+cloud-4core is already under significant memory pressure (15 GB swap used)
+That said, registry:2 adds barely any load (~50 MB RAM, negligible CPU), and /dev/sdc completely sidesteps the root disk space issue. For the Magnum use case (pre-cache images locally to avoid Docker Hub rate limits), a plain registry is perfectly sufficient.
+
+If you go this route
+The implementation would be roughly:
+
+```bash
+# Partition sdc
+sudo parted /dev/sdc mklabel gpt
+sudo parted /dev/sdc mkpart registry ext4 0% 100GB
+sudo parted /dev/sdc mkpart mongodb ext4 100GB 100%
+sudo mkfs.ext4 /dev/sdc1
+sudo mkfs.ext4 /dev/sdc2
+
+# Mount
+sudo mkdir -p /srv/registry /srv/mongodb
+# Add to /etc/fstab
+sudo mount /dev/sdc1 /srv/registry
+
+# Run registry
+sudo docker run -d --restart=always -p 5000:5000 \
+  -v /srv/registry:/var/lib/registry \
+  --name registry \
+  registry:2
+```
+
+Harbor is a CNCF-graduated container image registry with RBAC, vulnerability scanning (Trivy), image replication, audit logs, and a web UI. It wraps Docker Distribution (registry:2) and adds enterprise features. Deployed via Docker Compose on the deployment workstation.
+
+**Links:** [Documentation](https://goharbor.io/docs/2.12.0/) · [Installation](https://goharbor.io/docs/2.12.0/install-config/) · [Configuration](https://goharbor.io/docs/2.12.0/install-config/configure-yml-file/) · [GitHub](https://github.com/goharbor/harbor)
+
+**Original motivation:** Magnum K8s node boot pulls images from Docker Hub, which stalls due to rate limits / slow WAN. A local registry eliminates this. Harbor is chosen over plain `registry:2` because the cluster already has Zun (container service) and Magnum (K8s) — both benefit from RBAC, vulnerability scanning, and a browseable UI for managing images.
+
+#### Harbor Architecture
+
+Harbor runs as ~9 Docker Compose containers: core, portal (nginx), registry (distribution/registry:2), jobservice, redis, PostgreSQL, trivy-adapter, registryctl, and log (rsyslog). All managed by a single `docker-compose.yml` generated by the Harbor installer.
+
+**Requirements:** Docker Engine 20.10+, Docker Compose v2, 4 CPU / 8 GB RAM recommended, 160 GB disk recommended. Ports: 443 (HTTPS UI + registry API), 80 (HTTP redirect), 4443 (Docker Content Trust, optional).
+
+#### Host selection: deployment workstation
+
+| Candidate | Disk free | RAM available | Docker? | Verdict |
+|---|---|---|---|---|
+| cloud-4core | 14 GB (89% full) | 3.5 GB (15 GB total, 22 LXC containers) | No | **Too tight** — already at capacity with control plane |
+| cloud-eugene | 56 GB | Adequate | No | Compute node — adding Docker Compose here conflicts with Nova/Zun |
+| **workstation** | **511 GB** (42% used) | **10 GB** (124 GB total) | **Docker + Compose v2 installed** | **Best fit** — abundant resources, Docker ready, not a cluster node |
+
+The workstation is the deployment host, already outside the OSA-managed cluster. Running Harbor here:
+
+- Doesn't consume cluster resources or interfere with OSA
+- Has Docker Engine + Compose v2.39 already installed
+- Has 511 GB free on root SSD — more than enough for image storage
+- Is always on when the lab is in use (it's the admin machine)
+
+#### Networking: dedicated management IP
+
+Harbor needs a stable, routable IP on the management network (192.168.50.0/24) so all cluster nodes and Magnum VMs can reach it. The workstation's management NIC (`eno1`) currently gets `.210` via DHCP.
+
+**Approach: add a secondary static IP to `eno1` via NetworkManager.**
+
+The workstation's `eno1` is enslaved into `br-mgmt` as part of the wired connection "Wired connection 1" (DHCP, ipv4.method=auto). Adding a secondary IP:
+
+```bash
+# Add a secondary static IP to the management NIC
+nmcli con modify "Wired connection 1" +ipv4.addresses "192.168.50.201/24"
+nmcli con up "Wired connection 1"
+```
+
+This gives the workstation two IPs on the management network: `.210` (DHCP, general use) and `.201` (static, dedicated to Harbor). Harbor binds to `.201` so there's no port conflict with anything else on the workstation.
+
+**Why .201?** Scan of the 192.168.50.0/24 range shows these IPs are taken:
+- `.1` (router), `.168` (cloud-4core), `.171` (cloud-6core), `.178` (cloud-celeron), `.234` (cloud-eugene), `.210` (workstation)
+- `.52–.252` range: 22 LXC container IPs managed by OSA (`.52`, `.54`, `.65`, `.68`, `.78`, `.79`, `.80`, `.82`, `.85`, `.86`, `.95`, `.107`, `.112`, `.115`, `.143`, `.148`, `.150`, `.163`, `.182`, `.184`, `.188`, `.200`, `.206`, `.216`, `.223`, `.235`, `.252`)
+- `.87` (workstation wifi), `.111` (provider router WAN)
+
+`.201` is confirmed free by ping scan. It's adjacent to `.200` (trove container) which is fine — no conflict.
+
+**Alternative considered:** Running Harbor on port 5000 on the existing `.210` IP. This works but is non-standard (Docker clients default to port 443 for registries), and using a dedicated IP on standard ports (443/80) is cleaner for `docker pull harbor.local/project/image` without needing `:port` suffixes.
+
+**DNS/hosts:** Add `harbor.home.local` → `192.168.50.201` to `/etc/hosts` on the workstation and cluster nodes (via the `prepare_target_host` role), or use bare IP. For Magnum VMs that boot on the provider network, they still need management network routing (which they have via the router).
+
+#### Storage backend options
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A: Local filesystem (workstation)** | Simplest. 511 GB free. Fast SSD. No dependencies. | Only on one machine. Not HA (not needed for home lab). |
+| B: Swift backend | Reuses existing Swift (3.6 TB on cloud-eugene). Distributed storage. | Adds latency for every layer push/pull. Complex config. Swift TLS certs needed. |
+| C: cloud-4core sdc (120G SSD, empty, XFS) | Dedicated disk, good IOPS. | Only 117 GB free. On an already-overloaded node. Would need NFS/iSCSI export to workstation. |
+
+**Recommended: Option A — local filesystem on the workstation.**
+
+Harbor's `data_volume` points to a local directory (default `/data`). On the workstation with 511 GB free, this is more than sufficient. Container images compress well — a typical OpenStack Magnum image set (heat-container-agent, hyperkube, calico, coredns, dashboard, etc.) is ~5–10 GB total. Even with many additional project images, storage won't be a constraint.
+
+Swift (Option B) is technically supported — Harbor's `storage_service` accepts Swift config directly:
+
+```yaml
+storage_service:
+  swift:
+    username: admin
+    password: ADMIN_PASS
+    authurl: https://192.168.50.168:35357/v3/auth
+    tenant: admin
+    domain: default
+    region: RegionOne
+    container: harbor_images
+```
+
+But this adds unnecessary complexity and latency. Swift is better reserved for its intended purpose (object storage, Glance backend). If storage ever becomes an issue on the workstation, Swift can be added later without data loss (Harbor supports storage migration).
+
+#### TLS certificates
+
+Harbor requires HTTPS in production. Options:
+
+1. **Self-signed CA** — generate a CA, sign Harbor's cert, distribute CA to all Docker clients (cluster nodes, Magnum VMs). Docker needs the CA in `/etc/docker/certs.d/harbor.home.local/ca.crt`.
+
+2. **Existing OpenStack PKI** — OSA already has an internal CA. Could sign Harbor's cert with the same CA, but this couples Harbor to OSA's cert lifecycle.
+
+3. **Let's Encrypt** — not applicable (no public DNS for `192.168.50.201`).
+
+**Recommended: self-signed CA** — simplest for a home lab. The `prepare_target_host` role can distribute the CA cert to all nodes. The Ansible role for Harbor deployment can generate the CA + cert.
+
+#### Magnum integration
+
+Once Harbor is running, Magnum cluster templates can use it:
+
+```bash
+# Pre-push images to Harbor
+docker pull docker.io/openstackmagnum/heat-container-agent:wallaby-stable-1
+docker tag docker.io/openstackmagnum/heat-container-agent:wallaby-stable-1 harbor.home.local/magnum/heat-container-agent:wallaby-stable-1
+docker push harbor.home.local/magnum/heat-container-agent:wallaby-stable-1
+
+# Set Magnum labels to use Harbor
+openstack coe cluster template create k8s-harbor \
+  --labels container_infra_prefix=harbor.home.local/magnum/ \
+  ...
+```
+
+For images not controlled by `container_infra_prefix` (hyperkube, calico, coredns, etc.), the Magnum node's containerd must be configured with Harbor as a mirror. This is done via Magnum's `containerd_configure_registries` label or cloud-init scripts.
+
+#### Harbor Implementation
+
+**Step 1 — Add secondary IP to workstation:**
+
+Codify in an Ansible role/playbook (this is a change to the deployment host, not a default Ubuntu thing, so direct application is acceptable per project rules — but codifying is cleaner):
+
+```bash
+nmcli con modify "Wired connection 1" +ipv4.addresses "192.168.50.201/24"
+nmcli con up "Wired connection 1"
+```
+
+**Step 2 — Generate TLS certificates:**
+
+```bash
+# Create CA
+openssl genrsa -out ca.key 4096
+openssl req -x509 -new -nodes -sha512 -days 3650 -key ca.key -out ca.crt -subj "/CN=Harbor Home Lab CA"
+
+# Create Harbor server cert
+openssl genrsa -out harbor.home.local.key 4096
+openssl req -sha512 -new -key harbor.home.local.key -out harbor.home.local.csr \
+  -subj "/CN=harbor.home.local"
+cat > v3ext.cnf <<EOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=@alt_names
+[alt_names]
+DNS.1=harbor.home.local
+IP.1=192.168.50.201
+EOF
+openssl x509 -req -sha512 -days 3650 -extfile v3ext.cnf \
+  -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -in harbor.home.local.csr -out harbor.home.local.crt
+```
+
+**Step 3 — Download and configure Harbor:**
+
+```bash
+# Download Harbor offline installer (latest 2.12.x)
+wget https://github.com/goharbor/harbor/releases/download/v2.12.2/harbor-offline-installer-v2.12.2.tgz
+tar xzf harbor-offline-installer-v2.12.2.tgz
+cd harbor
+
+# Edit harbor.yml
+# hostname: harbor.home.local (or 192.168.50.201)
+# https.certificate: /path/to/harbor.home.local.crt
+# https.private_key: /path/to/harbor.home.local.key
+# harbor_admin_password: <strong password>
+# data_volume: /srv/harbor  (or /data)
+# Optional: enable Trivy scanner, metrics endpoint
+```
+
+**Step 4 — Run Harbor installer:**
+
+```bash
+sudo ./install.sh --with-trivy
+```
+
+This generates `docker-compose.yml` and starts all Harbor containers.
+
+**Step 5 — Distribute CA cert to cluster nodes:**
+
+Add to the `prepare_target_host` role:
+
+```yaml
+- name: Create Docker certs directory for Harbor
+  file:
+    path: /etc/docker/certs.d/harbor.home.local
+    state: directory
+
+- name: Deploy Harbor CA certificate
+  copy:
+    src: harbor-ca.crt
+    dest: /etc/docker/certs.d/harbor.home.local/ca.crt
+```
+
+Also add the CA to the system trust store so containerd (used by Magnum K8s nodes) trusts it.
+
+**Step 6 — Create Harbor projects and push images:**
+
+```bash
+# Login
+docker login harbor.home.local -u admin
+
+# Create 'magnum' project in Harbor UI or API
+# Push Magnum images
+for img in heat-container-agent hyperkube calico-node calico-cni coredns; do
+  docker pull <upstream>/$img:<tag>
+  docker tag <upstream>/$img:<tag> harbor.home.local/magnum/$img:<tag>
+  docker push harbor.home.local/magnum/$img:<tag>
+done
+```
+
+**Step 7 — Configure Magnum to use Harbor:**
+
+Update cluster template labels to point to Harbor for image pulls.
+
+**Step 8 — Verify:**
+
+```bash
+# Harbor UI
+curl -k https://harbor.home.local/api/v2.0/health
+
+# Docker pull from a cluster node
+ssh cloud-6core "docker pull harbor.home.local/magnum/heat-container-agent:wallaby-stable-1"
+
+# Check Harbor dashboard at https://192.168.50.201
+```
+
+#### Codification in IaC
+
+Since Harbor runs on the deployment workstation (not a cluster node), the Ansible playbook should:
+
+1. **New playbook:** `playbooks/deploy_harbor.yml` — deploys Harbor on localhost
+2. **New role:** `playbooks/roles/deploy_harbor/` — generates certs, downloads installer, templates `harbor.yml`, runs `install.sh`, creates systemd service for auto-start
+3. **Update role:** `playbooks/roles/prepare_target_host/` — distributes Harbor CA cert to cluster nodes
+4. **Inventory:** No changes needed — Harbor runs on the deployment host (localhost in Ansible terms)
+
+The workstation secondary IP (`192.168.50.201`) is a deviation from a default Ubuntu install, so it should be codified in the deploy_harbor role (per project rules).
+
+### Phase ?? — Adjutant Registration Service
+
+Adjutant is a Django-based workflow framework that automates admin tasks within an OpenStack cluster — self-service project sign-ups, user invitations, password resets, role management, and quota change requests. It fills functionality gaps in Keystone by wrapping business-logic approval workflows around identity operations. Built on Django + Django-Rest-Framework, it uses Galera for task persistence and Keystone for auth.
+
+**Links:** [Documentation](https://docs.openstack.org/adjutant/latest/) · [Features](https://docs.openstack.org/adjutant/latest/features.html) · [Configuration](https://docs.openstack.org/adjutant/latest/configuration.html) · [Dashboard](https://opendev.org/openstack/adjutant-ui) · CLI: `python-adjutantclient` (PyPI, v1.5.0) · Horizon plugin: `adjutant-ui`
+
+**Architecture:**
+
+- **Adjutant API** — Django REST API (port 5050, uWSGI behind HAProxy). Single service — no separate engine/worker processes like Mistral.
+- **Task workflow** — Three-phase state machine: initial submission → admin approval → token submission. Not all phases are used for every task type.
+- **Config format** — YAML (`/etc/adjutant/adjutant.yaml`), uses CONFspirator library (not oslo.config).
+
+Single service runs in a single LXC container on cloud-4core.
+
+**OSA automation:** Full automation available — `os-adjutant-install.yml` playbook, `os_adjutant` role (from `openstack-ansible-os_adjutant`), `env.d/adjutant.yml`, HAProxy group vars, Horizon auto-detection.
+
+**Current state:** The `os_adjutant` role is **not yet installed** (not in `/etc/ansible/roles/`). The collection playbook (`adjutant.yml`) exists. The role must be fetched via `get-ansible-role-requirements.yml` before deployment.
+
+**Services created:**
+
+| Service | Port | Type | Container |
+|---|---|---|---|
+| Adjutant API | 5050 | `registration` | `cloud-4core-adjutant-container-*` (LXC) |
+
+**Secrets needed** (3, in `user_secrets.yml` — not yet populated):
+
+- `adjutant_galera_password` — Galera database password
+- `adjutant_service_password` — Keystone service account password
+- `adjutant_secret_key` — Django SECRET_KEY for session/token signing
+
+**Host inventory needed** (`/etc/openstack_deploy/conf.d/`):
+
+- `registration_hosts` → cloud-4core (env.d maps `registration_containers` → `adjutant_container` → `adjutant_api`)
+
+#### What Adjutant gives us
+
+- **Self-service sign-ups** — unauthenticated API where prospective users request a project + account. Admin approval required (configurable auto-approve). Horizon panel: "Sign Up".
+
+- **User invitations** — project admins can invite users by email. Invitee receives a token link to set password and join the project. Horizon panel: "Project Users".
+
+- **Role management** — project admins/mods can manage roles for users in their project. Role hierarchy is configurable (e.g., `project_admin` can assign `project_mod`, `member`, `heat_stack_owner`). Horizon panel: "Project Users".
+
+- **Password reset** — unauthenticated self-service password reset via email token. Horizon panel: "Forgot Password".
+
+- **Email update** — authenticated users can change their email. Confirmation sent to new address; notification sent to old address. Horizon panel: "Update Email Address".
+
+- **Quota management** — users request quota changes between predefined size tiers (small/medium/large). Can require admin approval or auto-approve. Horizon panel: "Quota Management".
+
+- **Audit trail** — all tasks are persisted in Galera with full state history, providing an audit log of all admin-workflow operations.
+
+#### Email considerations
+
+Adjutant sends emails for invitations, password resets, sign-ups, and notifications. The default email backend is `django.core.mail.backends.smtp.EmailBackend`. For a home lab without an SMTP server, options:
+
+1. **Console backend** — `django.core.mail.backends.console.EmailBackend` — prints emails to the Adjutant container log (Loki-observable). Good for dev/testing.
+2. **File backend** — `django.core.mail.backends.filebased.EmailBackend` — writes emails to files in the container. Useful for debugging.
+3. **SMTP relay** — configure `adjutant_email_host` to point at an actual SMTP server (e.g., Postfix on localhost, or an external service).
+
+For the home lab, **console backend** is recommended initially — email content will appear in container logs and be visible in Grafana via Loki. Override via `adjutant_adjutant_conf_overrides` in `user_variables.yml`.
+
+#### CLI client note
+
+`python-adjutantclient` (v1.5.0) is available on PyPI but is **NOT** in OSA's upper constraints file — auto-discovery by the utility container will not pick it up. It must be installed manually in the utility container after deployment, or added to the utility container's pip packages via `utility_pip_extra_packages` in `user_variables.yml`.
+
+#### Adjutant Implementation
+
+**Step 0 — Install the `os_adjutant` role:**
+
+The role is defined in `ansible-role-requirements.yml` but not yet fetched. Run the role bootstrap to install it (and any other missing roles):
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible scripts/get-ansible-role-requirements.yml
+```
+
+This clones `os_adjutant` from `opendev.org/openstack/openstack-ansible-os_adjutant` (commit `ff967920`) into `/etc/ansible/roles/os_adjutant/`. Verify with `ls /etc/ansible/roles/os_adjutant/`.
+
+**Step 1 — Generate secrets:**
+
+```bash
+cd /opt/openstack-ansible
+sudo scripts/pw-token-gen.py --file /etc/openstack_deploy/user_secrets.yml
+```
+
+This populates `adjutant_galera_password`, `adjutant_service_password`, and `adjutant_secret_key`. Verify with `sudo grep adjutant /etc/openstack_deploy/user_secrets.yml`.
+
+**Step 2 — Create conf.d host mapping:**
+
+Create `playbooks/templates/openstack_deploy/conf.d/adjutant.yml.j2` and add a deploy task to `deploy_osa_config.yml`:
+
+```yaml
+---
+# Adjutant (Registration) host mappings
+registration_hosts:
+  cloud-4core:
+    ip: 192.168.50.168
+```
+
+Deploy: `ansible-playbook playbooks/deploy_osa_config.yml`
+
+**Step 3 — Configure email backend (optional but recommended):**
+
+Add to `user_variables.yml` (or via overrides template):
+
+```yaml
+adjutant_adjutant_conf_overrides:
+  django:
+    email:
+      email_backend: django.core.mail.backends.console.EmailBackend
+```
+
+This sends all Adjutant emails to stdout (container log → Loki → Grafana).
+
+**Step 4 — Create Adjutant LXC container:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/lxc-containers-create.yml --limit registration_all
+```
+
+**Step 5 — Deploy Adjutant:**
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-adjutant-install.yml
+```
+
+This creates the Galera `adjutant` database, registers the Keystone `registration` service/endpoints (port 5050), configures HAProxy, and starts the Adjutant API service (uWSGI).
+
+**Step 6 — Re-run Horizon to enable Adjutant dashboard:**
+
+OSA's Horizon role automatically detects `adjutant_all` group membership via `horizon_enable_adjutant_ui: "{{ (groups['adjutant_all'] is defined) and (groups['adjutant_all'] | length > 0) }}"` and installs `adjutant-ui` from `opendev.org/openstack/adjutant-ui`. Re-running Horizon installs the pip package and registers the dashboard panels.
+
+```bash
+cd /opt/openstack-ansible
+sudo openstack-ansible playbooks/os-horizon-install.yml
+```
+
+After this, Horizon will have panels for: **Project Users** (invite, role management), **Sign Up**, **Forgot Password**, **Update Email Address**, and **Quota Management**.
+
+**Step 7 — Install CLI client in utility container:**
+
+Since `python-adjutantclient` is not in upper constraints, install manually:
+
+```bash
+# Option A: Manual pip install
+ssh cloud-4core
+sudo lxc-attach -n cloud-4core-utility-container-*
+pip install python-adjutantclient
+
+# Option B (preferred, survives re-runs): Add to user_variables.yml
+# utility_pip_extra_packages:
+#   - python-adjutantclient
+# Then re-run: sudo openstack-ansible playbooks/utility-install.yml
+```
+
+**Step 8 — Update Grafana dashboard:**
+
+Add Adjutant container log queries to the telemetry Grafana dashboard — same pattern as Ceilometer/Gnocchi/Aodh/Mistral.
+
+**Step 9 — Verify:**
+
+```bash
+# Check Adjutant API service is running
+sudo lxc-attach -n cloud-4core-adjutant-container-* -- systemctl status adjutant-api
+
+# Check Keystone catalog
+openstack catalog show registration
+
+# Check the API responds
+openstack adjutant task-list  # or: curl -k https://192.168.50.168:5050/v1/tasks/ -H "X-Auth-Token: ..."
+
+# Test via Horizon
+# Navigate to Project → Project Users, Identity → Sign Up
+```
 
 ### Phase ?? — Zaqar Messaging Service
 
@@ -2659,7 +3157,7 @@ Clients: `python-zaqarclient` (CLI), `zaqar-ui` (Horizon dashboard plugin)
 
 #### Architecture for this cluster
 
-```
+```bash
                     ┌───────── cloud-4core ─────────┐
                     │                                │
   Tenant / CLI ──▶  │  HAProxy :8888                 │
@@ -2691,15 +3189,18 @@ Zaqar runs entirely on the controller (cloud-4core). No compute node involvement
 #### Storage backend decision
 
 **Option A: MongoDB for both stores** (recommended by upstream docs)
+
 - Pro: Best tested path, single backend to manage, recommended for production
 - Con: Need to install MongoDB (new dependency), manage a new database service
 - MongoDB data on cloud-4core `/dev/sdc` (119.2G, currently xfs-formatted but unmounted/unused)
 
 **Option B: Swift (messages) + SQLAlchemy (management)**
+
 - Pro: Reuses existing Swift (cloud-eugene) and MariaDB/Galera — zero new services
 - Con: Swift has higher latency for messaging, less tested for Zaqar, may not support all features (e.g., claims). The Swift message_store driver is functional but not the primary path.
 
 **Option C: Redis for both stores**
+
 - Pro: Very fast, lightweight
 - Con: Need to install Redis, data durability concerns without careful config
 
@@ -2708,6 +3209,7 @@ Zaqar runs entirely on the controller (cloud-4core). No compute node involvement
 #### Deployment plan (once decisions are made)
 
 **Step 0: MongoDB installation on cloud-4core**
+
 - Mount `/dev/sdc` at `/var/lib/mongodb` (reformat to xfs with appropriate mount options, or reuse existing xfs)
 - Install MongoDB Community Edition (version TBD — 7.0 LTS or 8.0)
 - Single standalone instance (no replica set needed for home lab)
@@ -2715,12 +3217,14 @@ Zaqar runs entirely on the controller (cloud-4core). No compute node involvement
 - Create `zaqar` database and user with authentication
 
 **Step 1: Zaqar LXC container on cloud-4core**
+
 - Create a new LXC container (consistent with OSA's approach for other services)
 - Alternative: install directly in the `zaqar_server` utility container or on the host
 - Install Zaqar from pip (matching `stable/2025.2` branch)
 - Dependencies: `pymongo`, `falcon`, `uwsgi` (or use the built-in WSGI server)
 
 **Step 2: Zaqar configuration (`/etc/zaqar/zaqar.conf`)**
+
 ```ini
 [DEFAULT]
 auth_strategy = keystone
@@ -2799,7 +3303,7 @@ Since there's no OSA role, we'll create:
   5. Optionally install zaqar-ui in Horizon
 - `playbooks/roles/deploy_zaqar/` — custom role with templates for zaqar.conf, systemd service, etc.
 
-#### Open questions (resolve before implementing)
+#### Zaqar Open questions (resolve before implementing)
 
 1. **MongoDB vs Swift+SQLAlchemy backend?**
    - MongoDB is the upstream default and best tested. But Swift + SQLAlchemy would avoid installing a new database service entirely.
