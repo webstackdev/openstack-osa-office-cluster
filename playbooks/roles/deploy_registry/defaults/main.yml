@@ -1,0 +1,8 @@
+---
+# Docker Distribution (registry:2) on cloud-4core
+
+registry_device: /dev/sdc
+registry_mount: /srv/registry
+registry_port: 5050
+registry_container_name: registry
+registry_image: registry:2

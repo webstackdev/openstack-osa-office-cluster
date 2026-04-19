@@ -20,3 +20,11 @@
 - name: Install Grafana (controller only)
   ansible.builtin.include_tasks: grafana.yml
   when: is_controller | default(false)
+
+- name: Configure ZooKeeper file logging (controller only)
+  ansible.builtin.include_tasks: zookeeper_logging.yml
+  when: is_controller | default(false)
+
+- name: Configure HAProxy request logging (controller only)
+  ansible.builtin.include_tasks: haproxy_logging.yml
+  when: is_controller | default(false)

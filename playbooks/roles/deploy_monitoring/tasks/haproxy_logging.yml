@@ -1,0 +1,23 @@
+---
+# Deploy rsyslog config to route HAProxy logs (local0 facility) to
+# /var/log/haproxy.log instead of /var/log/syslog.
+# HAProxy already has "log /dev/log local0" in global and "option httplog"
+# on frontends — this just routes the syslog facility to a dedicated file
+# that Promtail scrapes.
+
+- name: Deploy HAProxy rsyslog config
+  ansible.builtin.copy:
+    src: 49-haproxy.conf
+    dest: /etc/rsyslog.d/49-haproxy.conf
+    mode: "0644"
+  notify: Restart rsyslog
+
+- name: Ensure /var/log/haproxy.log exists with correct permissions
+  ansible.builtin.file:
+    path: /var/log/haproxy.log
+    state: touch
+    owner: syslog
+    group: adm
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve

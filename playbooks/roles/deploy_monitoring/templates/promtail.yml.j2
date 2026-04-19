@@ -44,17 +44,28 @@ scrape_configs:
         labels:
           job: openstack
           host: {{ short_hostname }}
-          __path__: /var/lib/lxc/*/rootfs/var/log/**/*.log
+          __path__: /openstack/log/*/**/*.log
     pipeline_stages:
       - match:
           selector: '{job="openstack"}'
           stages:
             - regex:
                 source: filename
-                expression: '/var/lib/lxc/(?P<container>[^/]+)/rootfs/var/log/(?P<logpath>.+)'
+                expression: '/openstack/log/(?P<container>[^/]+)/(?P<logpath>.+)'
             - labels:
                 container:
                 logpath:
+
+  - job_name: docker_containers
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker
+          host: {{ short_hostname }}
+          __path__: /var/lib/docker/containers/**/*-json.log
+    pipeline_stages:
+      - docker: {}
 {% endif %}
 {% if is_compute | default(false) %}
 

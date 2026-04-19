@@ -37,6 +37,18 @@ This has caused real production issues — an SSH `trusted_ca` file was silently
 - **OSA config:** `/etc/openstack_deploy/` on the deployment host
 - **Network manager:** All nodes use **NetworkManager** (Ubuntu 24.04 desktop default), **not** systemd-networkd. OSA assumes systemd-networkd in some roles (e.g., `lxc_hosts` masks `lxc-net` and creates bridge configs under `/etc/systemd/network/`), but since systemd-networkd is disabled on these nodes, those configs have no effect. NetworkManager manages all host networking including the `br-mgmt` bridge.
 
+## Provider Network Topology
+
+**Read "Network Topology" in `INVENTORY.md` before debugging any networking issue.**
+
+Key facts that cause confusion:
+
+- The **management network** is `192.168.50.0/24` (RT-AX58U router). The workstation and all cluster nodes have IPs here.
+- The **provider network** (`physnet1`, flat) is `192.168.2.0/24`, served by a **separate physical router** (RT-AC57U) whose WAN port is at `192.168.50.111` on the management network.
+- OpenStack floating IPs are allocated from `192.168.2.0/24`. They are **not directly reachable from the workstation** unless a static route exists (`ip route add 192.168.2.0/24 via 192.168.50.111`).
+- The provider NIC on each compute node (e.g., `enp6s0` on cloud-6core, `enp7s0` on cloud-celeron, `enp12s0` on cloud-eugene) has **no IP address** — it is a raw L2 port inside the OVS bridge `eth12`.
+- Do **not** conclude "floating IPs are broken" just because pings from the workstation fail — check routing first.
+
 ## Git Policy
 
 - **Never run `git add`, `git commit`, `git push`, or `git amend` on behalf of the user.** The user handles all Git operations manually.

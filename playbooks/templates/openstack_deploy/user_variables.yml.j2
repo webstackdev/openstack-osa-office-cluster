@@ -217,6 +217,9 @@ trove_config_overrides:
     # project name as project_id). Neutron+Designate integration handles
     # instance DNS records via the dns_domain setting instead.
     trove_dns_support: "False"
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/trove
 
 # Datastore definitions — MariaDB 11.4 and PostgreSQL 17
 trove_datastores:
@@ -287,6 +290,10 @@ magnum_conductor_workers: 2
 # ============================================================================
 # Compute nodes shared with Nova — both manage workloads on the same hosts
 zun_zun_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/zun
   compute:
     host_shared_with_nova: true
 
@@ -323,8 +330,119 @@ magnum_cert_manager_type: barbican
 # complete the chain. OSA's PKI management deploys this root CA to all
 # containers at /usr/local/share/ca-certificates/.
 magnum_config_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/magnum
   drivers:
     openstack_ca_file: /usr/local/share/ca-certificates/ExampleCorpRoot.crt
+
+# ============================================================================
+# Logging: switch containerized services from journal to file-based logging
+# ============================================================================
+# OSA 2025.2 hardcodes use_journal=True in every os_* role template. But
+# Promtail only scrapes file logs from LXC containers (not container journals).
+# These overrides switch each service to file logging so Promtail picks them up
+# via the lxc_containers glob: /var/lib/lxc/*/rootfs/var/log/**/*.log
+#
+# NOTE: Only containerized services on cloud-4core need this. Host-level
+# services (cinder-volume, nova-compute, kuryr-libnetwork, neutron-ovn-
+# metadata-agent) already reach Loki via the host journal scraper.
+
+cinder_cinder_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/cinder
+
+nova_nova_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/nova
+
+neutron_neutron_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/neutron
+
+keystone_keystone_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/keystone
+
+glance_glance_api_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/glance
+
+heat_heat_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/heat
+
+octavia_octavia_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/octavia
+
+placement_placement_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/placement
+
+barbican_config_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/barbican
+
+designate_designate_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/designate
+
+aodh_aodh_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/aodh
+
+ceilometer_ceilometer_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/ceilometer
+
+gnocchi_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/gnocchi
+
+manila_manila_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/manila
+
+mistral_mistral_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/mistral
+
+# Galera: enable file-based error logging (MariaDB defaults to journal-only)
+galera_my_cnf_overrides:
+  mysqld:
+    log_error: /var/log/mysql/error.log
 
 # ============================================================================
 # Security hardening (ansible-hardening role)
@@ -333,3 +451,6 @@ magnum_config_overrides:
 # sessions after a single missed keepalive. Use a reasonable value instead.
 security_sshd_client_alive_interval: 60
 security_sshd_client_alive_count_max: 3
+# Disable STIG V-72223 shell idle timeout (TMOUT=600 in /etc/profile).
+# Set to 0 to prevent the hardening role from adding it.
+security_rhel7_session_timeout: 0

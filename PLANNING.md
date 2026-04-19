@@ -2621,7 +2621,9 @@ Installed automatically in the utility container when `utility-install.yml` is r
 6. Update Grafana dashboard with Mistral log queries
 7. Verify: `openstack workflow list`, `openstack catalog show workflowv2`
 
-### Phase 19 — Implement Harbor Image Repository
+### Phase 19 — Implement Docker Distribution Image Repository
+
+**Decision:** Implementing plain Docker Distribution (`registry:2`) on cloud-4core. Harbor was evaluated but rejected for now — cloud-4core is too resource-constrained for Harbor's 9 containers + PostgreSQL + Redis (~2-4 GB RAM). When cloud-4core hardware is upgraded in the future, migrate to Harbor for RBAC, Trivy scanning, and web UI.
 
 Running Docker Distribution on cloud-4core with /dev/sdc
 
@@ -2638,6 +2640,7 @@ Current state of cloud-4core
 | **/dev/sdc**              | 119.2 GB SSD, XFS, **unmounted, empty** (117 GB free)    | Perfect candidate                                  |
 
 Why this works despite the tight system
+
 The registry:2 container is extremely lightweight:
 
 ~30 MB RAM at idle, ~50-100 MB under load (it's a single Go binary)
@@ -2694,7 +2697,6 @@ Port 5000 makes client config slightly noisier
 cloud-4core is already under significant memory pressure (15 GB swap used)
 That said, registry:2 adds barely any load (~50 MB RAM, negligible CPU), and /dev/sdc completely sidesteps the root disk space issue. For the Magnum use case (pre-cache images locally to avoid Docker Hub rate limits), a plain registry is perfectly sufficient.
 
-If you go this route
 The implementation would be roughly:
 
 ```bash
@@ -2717,7 +2719,9 @@ sudo docker run -d --restart=always -p 5000:5000 \
   registry:2
 ```
 
-Harbor is a CNCF-graduated container image registry with RBAC, vulnerability scanning (Trivy), image replication, audit logs, and a web UI. It wraps Docker Distribution (registry:2) and adds enterprise features. Deployed via Docker Compose on the deployment workstation.
+#### Future: Harbor (after cloud-4core hardware upgrade)
+
+Harbor is a CNCF-graduated container image registry with RBAC, vulnerability scanning (Trivy), image replication, audit logs, and a web UI. It wraps Docker Distribution (registry:2) and adds enterprise features. Would be deployed via Docker Compose on the deployment workstation or on upgraded cloud-4core hardware.
 
 **Links:** [Documentation](https://goharbor.io/docs/2.12.0/) · [Installation](https://goharbor.io/docs/2.12.0/install-config/) · [Configuration](https://goharbor.io/docs/2.12.0/install-config/configure-yml-file/) · [GitHub](https://github.com/goharbor/harbor)
 
@@ -3388,3 +3392,190 @@ The biggest value items are projects/users and images — those are what make th
 ## Button-Down
 
 Deploy Ansible Vault for `user_secrets.yml` at rest. Decrypt at playbook runtime with `--ask-vault-pass`.
+
+## Improve Log Coverage
+
+### Problem
+
+OSA 2025.2 hardcodes `use_journal = True` in every `os_*` role's `.j2` config template. All OpenStack services log to journald inside their LXC container. But Promtail only scrapes:
+- **File logs** via `lxc_containers` job: globs `/var/lib/lxc/*/rootfs/var/log/**/*.log` — finds only `dpkg.log`, `bootstrap.log`, etc. Zero OpenStack service logs.
+- **Host journal** via `journal` job: reads the host journal only. Container journals at `/var/lib/lxc/<container>/rootfs/var/log/journal/<machine-id>/` are never read.
+
+**Result:** Loki has `{job="journal", "syslog", "openvswitch"}` only. No OpenStack service logs, no HAProxy request logs.
+
+### What's Already Working
+
+| Source | In Loki? | Query |
+|--------|----------|-------|
+| Host-level services (cinder-volume, nova-compute, swift-*) | Yes | `{job="journal", host="cloud-eugene", unit="cinder-volume.service"}` |
+| RabbitMQ file logs (`/var/log/rabbitmq/`) | Yes (via glob) | `{job="openstack", container="rabbit-mq-container"}` |
+| OVN file logs (`/var/log/ovn/`) | Yes (via glob) | `{job="openstack", container="neutron-ovn-northd-container"}` |
+| Repo container Apache/GlusterFS logs | Yes (via glob) | `{job="openstack", container="repo-container"}` |
+
+### What's Missing
+
+| Source | Container | Root Cause |
+|--------|-----------|------------|
+| All containerized OpenStack services | 18 containers | `use_journal=True` hardcoded, no log files |
+| Galera (MariaDB) | galera-container | `log_error` commented out, logs to journal only |
+| ZooKeeper | zookeeper-container | logback.xml ROLLINGFILE appender commented out, CONSOLE-only → journal |
+| HAProxy request logs | host (cloud-4core) | `log /dev/log local0` but no `option httplog`, rsyslog not routing to file |
+
+### Implementation Plan
+
+#### Step 1: Switch OpenStack services to file-based logging
+
+`use_journal = True` is hardcoded in each role's `.j2` template (not a variable). But each role applies `*_conf_overrides` via `openstack.config_template.config_template` **after** rendering the template, so overrides win.
+
+Add to `user_variables.yml.j2` a YAML anchor + per-service overrides:
+
+```yaml
+# Logging: disable journal, enable file-based logging for Promtail collection
+_openstack_logging_overrides: &openstack_logging_overrides
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+    log_dir: /var/log/{{ service_name }}   # each service already has its own log_dir default
+
+cinder_cinder_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+
+nova_nova_conf_overrides:
+  DEFAULT:
+    use_journal: false
+    use_stderr: false
+
+# ... (one per deployed service, see full list below)
+```
+
+**Deployed services needing overrides** (18 containers with hardcoded `use_journal = True`):
+
+| Container | Override Variable | Notes |
+|-----------|-------------------|-------|
+| cinder-api | `cinder_cinder_conf_overrides` | |
+| nova-api | `nova_nova_conf_overrides` | |
+| neutron-server | `neutron_neutron_conf_overrides` | Also need `neutron_ovn_metadata_agent_ini_overrides`? |
+| keystone | `keystone_keystone_conf_overrides` | |
+| glance | `glance_glance_api_conf_overrides` | Also `glance_glance_cache_conf_overrides` |
+| heat-api | `heat_heat_conf_overrides` | |
+| octavia-server | `octavia_octavia_conf_overrides` | |
+| magnum | `magnum_config_overrides` | Already has `drivers.openstack_ca_file` — must merge |
+| placement | `placement_placement_conf_overrides` | |
+| barbican | `barbican_config_overrides` | |
+| designate | `designate_designate_conf_overrides` | |
+| aodh | `aodh_aodh_conf_overrides` | |
+| ceilometer | `ceilometer_ceilometer_conf_overrides` | |
+| gnocchi | `gnocchi_conf_overrides` | |
+| manila | `manila_manila_conf_overrides` | |
+| mistral | `mistral_mistral_conf_overrides` | |
+| trove-api | `trove_config_overrides` | |
+| zun-api | `zun_zun_conf_overrides` | Already has `compute.host_shared_with_nova` — must merge |
+| swift-proxy | `swift_swift_conf_overrides` | Swift uses its own paste logging — check if this works |
+| horizon | N/A | Django app, uses `/var/log/horizon/` by default |
+
+**Re-deploy:** Run the individual service playbooks (e.g., `os-cinder-install.yml`) or the full `setup-openstack.yml`. Each role will re-render the config and restart services.
+
+#### Step 2: Enable galera file logging
+
+```yaml
+galera_my_cnf_overrides:
+  mysqld:
+    log_error: /var/log/mysql/error.log
+```
+
+**Re-deploy:** `galera-install.yml`
+
+#### Step 3: Enable ZooKeeper file logging
+
+ZK uses logback (not log4j). The default `logback.xml` has the ROLLINGFILE appender commented out and only uses CONSOLE (→ stdout → journal). Options:
+- **Option A:** Deploy a custom `logback.xml` via a task in our `prepare_target_host` role or a new role. Uncomment ROLLINGFILE, add it to root logger, set `zookeeper.log.dir=/var/log/zookeeper`.
+- **Option B:** Set ZK environment variable `ZOO_LOG_DIR=/var/log/zookeeper` and `ZOO_LOG4J_PROP=INFO,ROLLINGFILE` — but this is log4j syntax and ZK 3.8+ uses logback, so may not work.
+- **Recommendation:** Option A. Deploy logback.xml template.
+
+**Re-deploy:** `zookeeper-install.yml` (or SSH + restart for one-off fix)
+
+#### Step 4: Fix HAProxy request logging
+
+Current state: `log /dev/log local0` in config, `option dontlognull` in defaults, but no `option httplog`. Request logs go to syslog at `local0` facility but `/var/log/haproxy.log` only has startup messages.
+
+Changes needed:
+1. Add `option httplog` to HAProxy defaults (via OSA override variable — check `haproxy_server` role)
+2. Ensure rsyslog routes `local0.*` to `/var/log/haproxy.log` (may need rsyslog config on cloud-4core host)
+3. Add Promtail scrape for HAProxy request logs (the existing `haproxy` job in `promtail.yml.j2` already reads `/var/log/haproxy.log` — just needs content to appear)
+
+#### Step 5: Collect Docker registry logs
+
+The Docker Distribution registry on cloud-4core runs as a Docker container (not LXC) with the default `json-file` log driver. Logs live at `/var/lib/docker/containers/<id>/<id>-json.log` and are not scraped by any existing Promtail job. These logs are critical for diagnosing image pull timeouts during Magnum deployments.
+
+Add a `docker_containers` scrape job to `promtail.yml.j2` (controller only):
+- Glob: `/var/lib/docker/containers/**/*-json.log`
+- Pipeline: parse Docker JSON format (`stream`, `time`, `log` fields), extract container name from path or Docker labels
+- Labels: `job=docker`, `container=registry`
+
+#### Step 6: Update Promtail config
+
+The existing `lxc_containers` job glob (`/var/lib/lxc/*/rootfs/var/log/**/*.log`) should automatically pick up the new file logs after Step 1-3. Verify the pipeline stages correctly extract:
+- `container` label from path
+- `logpath` label from filename
+- Consider adding `service` label extraction from filename (e.g., `cinder-api.log` → `service=cinder`)
+
+#### Step 7: Grafana dashboards
+
+Add panels:
+- Error log stream — `{job="openstack"} |= "ERROR"` across all services
+- Per-service panels — HAProxy, Galera, Heat, Magnum, Nova, Octavia, Cinder, Neutron
+- HAProxy 5xx panel — catch Gateway Timeouts
+- Galera error panel — `{job="openstack", container=~"galera.*"}`
+
+### IaC Files to Modify
+
+1. `playbooks/templates/openstack_deploy/user_variables.yml.j2` — add all `*_conf_overrides` for file logging
+2. `playbooks/roles/deploy_monitoring/templates/promtail.yml.j2` — add `docker_containers` scrape job, verify/update pipeline stages
+3. `playbooks/roles/deploy_monitoring/files/` or `templates/` — Grafana dashboard JSON (if codified)
+4. Possibly a new ZooKeeper logback.xml template (in `prepare_target_host` or dedicated role)
+5. HAProxy rsyslog config (if not handled by OSA's `haproxy_server` role)
+
+### Execution Order
+
+1. Add `*_conf_overrides` to `user_variables.yml.j2` and deploy via `deploy_osa_config.yml`
+2. Re-run affected OSA playbooks to regenerate service configs and restart services
+3. Verify file logs appear in containers: `ls /var/lib/lxc/*/rootfs/var/log/<service>/`
+4. Verify Promtail picks them up: `curl localhost:9080/targets` on cloud-4core
+5. Verify logs in Loki: `{job="openstack"}` query in Grafana
+6. Deploy ZK logback.xml and galera override, verify
+7. Fix HAProxy request logging, verify
+8. Add Docker container log scraping to Promtail, redeploy, verify `{job="docker"}` in Grafana
+9. Build Grafana dashboard panels
+
+Two commands to run in sequence:
+
+1. Galera (infrastructure — not included in setup-openstack):
+
+```bash
+env -u ANSIBLE_INVENTORY openstack-ansible playbooks/galera-install.yml --tags galera-config,galera-install 2>&1 | tee /tmp/galera-logging.log
+```
+
+2. All OpenStack services:
+
+```bash
+env -u ANSIBLE_INVENTORY openstack-ansible playbooks/setup-openstack.yml 2>&1 | tee /tmp/setup-openstack-logging.log
+```
+
+Check status (from another terminal):
+
+```bash
+# Watch the log live
+tail -f /tmp/setup-openstack-logging.log
+
+# Quick check which play is running
+grep "^PLAY \[" /tmp/setup-openstack-logging.log | tail -3
+
+# Check for failures so far
+grep -c "failed=\([1-9]\)" /tmp/setup-openstack-logging.log
+```
+
+The galera run should be quick (a few minutes). The setup-openstack.yml will take a while — it runs through all deployed services. Each service will detect the changed config (use_journal override), rewrite it, and restart.
+
+

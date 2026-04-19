@@ -84,6 +84,27 @@
   when: "'br-storage-port-' not in configure_networking_nm_connections.stdout"
   changed_when: true
 
+# Remove any standalone NM connection profiles on interfaces that should be
+# bridge ports. Pre-existing profiles (e.g. "storage" on enp7s0) take priority
+# over the bridge-port connection profile and prevent the NIC from joining the
+# bridge, leaving it without a physical uplink.
+- name: Find active connection on storage interface
+  ansible.builtin.shell: >
+    nmcli -t -f NAME,DEVICE connection show --active |
+    awk -F: '$2 == "{{ storage_interface }}" && $1 != "br-storage-port-{{ storage_interface }}" {print $1}'
+  register: configure_networking_storage_conflict
+  changed_when: false
+
+- name: Remove conflicting connection on storage interface
+  ansible.builtin.command: "nmcli connection delete '{{ configure_networking_storage_conflict.stdout }}'"
+  when: configure_networking_storage_conflict.stdout | length > 0
+  changed_when: true
+
+- name: Activate bridge port on storage interface
+  ansible.builtin.command: "nmcli connection up br-storage-port-{{ storage_interface }}"
+  when: configure_networking_storage_conflict.stdout | length > 0
+  changed_when: true
+
 - name: Activate bridges
   ansible.builtin.command: "nmcli connection up {{ item }}"
   loop:

@@ -28,3 +28,8 @@
     name: grafana-server
     state: restarted
     daemon_reload: true
+
+- name: Restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted

@@ -69,6 +69,40 @@
     group: promtail
     mode: "0755"
 
+- name: Grant promtail access to Docker container logs
+  when: is_controller | default(false)
+  block:
+    - name: Install acl package for setfacl
+      ansible.builtin.apt:
+        name: acl
+        state: present
+
+    - name: Set ACL on Docker data directory for promtail traversal
+      ansible.posix.acl:
+        path: /var/lib/docker
+        entity: promtail
+        etype: user
+        permissions: x
+        state: present
+
+    - name: Set ACL on Docker containers directory for promtail
+      ansible.posix.acl:
+        path: /var/lib/docker/containers
+        entity: promtail
+        etype: user
+        permissions: rX
+        recursive: true
+        state: present
+
+    - name: Set default ACL on Docker containers directory for promtail
+      ansible.posix.acl:
+        path: /var/lib/docker/containers
+        entity: promtail
+        etype: user
+        permissions: rX
+        default: true
+        state: present
+
 - name: Deploy promtail config
   ansible.builtin.template:
     src: promtail.yml.j2

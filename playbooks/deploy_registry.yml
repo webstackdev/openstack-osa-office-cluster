@@ -1,0 +1,25 @@
+---
+# Deploy Docker Distribution registry on cloud-4core
+#
+# Partitions /dev/sdc (100 GB registry + ~19 GB mongodb),
+# runs registry:2 container on port 5000.
+#
+# Usage: ansible-playbook playbooks/deploy_registry.yml
+#
+# After deployment:
+#   docker push 192.168.50.168:5000/myimage:tag
+#   curl http://192.168.50.168:5000/v2/_catalog
+
+- name: Deploy Docker Distribution registry
+  hosts: controllers
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Install Docker Python SDK
+      ansible.builtin.apt:
+        name: python3-docker
+        state: present
+
+  roles:
+    - deploy_registry

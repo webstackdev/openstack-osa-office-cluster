@@ -22,6 +22,12 @@ RT-AX58U (LAN: 192.168.50.1) ← management router
         └── provider flat network (physnet1)
 ```
 
+Add a route on workstation to the provider network:
+
+```bash
+sudo ip route add 192.168.2.0/24 via 192.168.50.111
+```
+
 The physical underlying interface for a provider network (such as one used for Geneve encapsulation) typically does not have an IP address assigned to it in the host's operating system.
 
 In an OpenStack configuration using Geneve (standard for OVN-based deployments), the networking works through two distinct layers:

@@ -1,0 +1,100 @@
+---
+# Partition /dev/sdc, mount registry partition, run registry:2
+
+- name: Read current partition table
+  community.general.parted:
+    device: "{{ registry_device }}"
+    state: info
+  register: sdc_info
+
+- name: Wipe existing filesystem (no partition table)
+  ansible.builtin.command:
+    cmd: "wipefs -a {{ registry_device }}"
+  when: sdc_info.disk.table != 'gpt'
+
+- name: Create registry partition (100 GB)
+  community.general.parted:
+    device: "{{ registry_device }}"
+    number: 1
+    label: gpt
+    name: registry
+    part_start: "0%"
+    part_end: "100GiB"
+    fs_type: ext4
+    state: present
+  when: sdc_info.disk.table != 'gpt'
+
+- name: Create mongodb partition (remainder)
+  community.general.parted:
+    device: "{{ registry_device }}"
+    number: 2
+    label: gpt
+    name: mongodb
+    part_start: "100GiB"
+    part_end: "100%"
+    fs_type: ext4
+    state: present
+  when: sdc_info.disk.table != 'gpt'
+
+- name: Create ext4 filesystem on registry partition
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ registry_device }}1"
+
+- name: Create ext4 filesystem on mongodb partition
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ registry_device }}2"
+
+- name: Create registry mount point
+  ansible.builtin.file:
+    path: "{{ registry_mount }}"
+    state: directory
+    mode: "0755"
+
+- name: Create mongodb mount point
+  ansible.builtin.file:
+    path: /srv/mongodb
+    state: directory
+    mode: "0755"
+
+- name: Mount registry partition
+  ansible.posix.mount:
+    path: "{{ registry_mount }}"
+    src: "{{ registry_device }}1"
+    fstype: ext4
+    state: mounted
+    opts: defaults,noatime
+
+- name: Mount mongodb partition
+  ansible.posix.mount:
+    path: /srv/mongodb
+    src: "{{ registry_device }}2"
+    fstype: ext4
+    state: mounted
+    opts: defaults,noatime
+
+- name: Pull registry image
+  community.docker.docker_image:
+    name: "{{ registry_image }}"
+    source: pull
+
+- name: Run registry container
+  community.docker.docker_container:
+    name: "{{ registry_container_name }}"
+    image: "{{ registry_image }}"
+    state: started
+    restart_policy: always
+    ports:
+      - "{{ registry_port }}:5000"
+    volumes:
+      - "{{ registry_mount }}:/var/lib/registry"
+
+- name: Wait for registry to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ registry_port }}/v2/"
+    status_code: 200
+  register: registry_health
+  retries: 10
+  delay: 3
+  until: registry_health.status == 200

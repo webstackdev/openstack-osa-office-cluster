@@ -1,0 +1,42 @@
+---
+# Deploy custom logback.xml to ZooKeeper container to enable file-based logging.
+# ZooKeeper's default logback.xml only has CONSOLE appender (→ journal).
+# This deploys a version with ROLLINGFILE writing to /var/log/zookeeper/zookeeper.log,
+# which Promtail's lxc_containers job scrapes automatically.
+#
+# Note: /var/log inside the container is bind-mounted from
+# /openstack/log/<container>/, so directory creation and ownership
+# must happen inside the container (via lxc-attach) where UIDs are correct.
+
+- name: Find ZooKeeper container
+  ansible.builtin.command: lxc-ls --filter='.*zookeeper.*'
+  register: deploy_monitoring_zk_container
+  changed_when: false
+
+- name: Set ZooKeeper container name
+  ansible.builtin.set_fact:
+    deploy_monitoring_zk_container_name: "{{ deploy_monitoring_zk_container.stdout | trim }}"
+
+- name: Create ZooKeeper log directory inside container
+  ansible.builtin.command: >
+    lxc-attach -n {{ deploy_monitoring_zk_container_name }} --
+    bash -c "mkdir -p /var/log/zookeeper && chown zookeeper:zookeeper /var/log/zookeeper"
+  register: deploy_monitoring_zk_logdir
+  changed_when: deploy_monitoring_zk_logdir.rc == 0
+  when: deploy_monitoring_zk_container_name | length > 0
+
+- name: Deploy custom logback.xml to ZooKeeper container
+  ansible.builtin.template:
+    src: zookeeper-logback.xml.j2
+    dest: "/var/lib/lxc/{{ deploy_monitoring_zk_container_name }}/rootfs/etc/zookeeper/logback.xml"
+    mode: "0644"
+  register: deploy_monitoring_zk_logback
+  when: deploy_monitoring_zk_container_name | length > 0
+
+- name: Restart ZooKeeper service in container
+  ansible.builtin.command: >
+    lxc-attach -n {{ deploy_monitoring_zk_container_name }} --
+    systemctl restart zookeeper
+  when:
+    - deploy_monitoring_zk_container_name | length > 0
+    - deploy_monitoring_zk_logback is changed
