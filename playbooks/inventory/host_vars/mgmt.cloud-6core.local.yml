@@ -21,3 +21,9 @@ is_compute: true
 # Storage - Nova ephemeral
 ephemeral_device: /dev/sdb
 ephemeral_mount: /var/lib/nova/instances
+
+# Host-level OpenStack service log directories
+# neutron-ovn-metadata-agent and ceilometer-polling run on the host (not in LXC)
+host_openstack_log_dirs:
+  - { dir: ceilometer, owner: ceilometer }
+  - { dir: neutron, owner: neutron }

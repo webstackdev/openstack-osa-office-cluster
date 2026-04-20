@@ -3578,4 +3578,12 @@ grep -c "failed=\([1-9]\)" /tmp/setup-openstack-logging.log
 
 The galera run should be quick (a few minutes). The setup-openstack.yml will take a while — it runs through all deployed services. Each service will detect the changed config (use_journal override), rewrite it, and restart.
 
+## Pushing a new Image to Docker Distribution on cloud-4core
 
+From local workstation:
+
+```bash
+sudo docker pull docker.io/kubernetesui/dashboard:v2.0.0
+sudo docker tag docker.io/kubernetesui/dashboard:v2.0.0 192.168.50.168:5050/openstackmagnum/dashboard:v2.0.0
+sudo docker push 192.168.50.168:5050/openstackmagnum/dashboard:v2.0.0
+```

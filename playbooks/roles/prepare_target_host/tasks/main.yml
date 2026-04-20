@@ -139,6 +139,41 @@
     enabled: true
     state: started
 
+# Host-level OpenStack services (not in LXC containers) need log directories.
+# OSA doesn't create these when log_dir is set via conf_overrides.
+- name: Create log directories for host-level OpenStack services
+  ansible.builtin.file:
+    path: "/var/log/{{ item.dir }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "0750"
+  loop: "{{ host_openstack_log_dirs | default([]) }}"
+  loop_control:
+    label: "/var/log/{{ item.dir }}"
+
+# The neutron-common package ships a logrotate config that runs as root.
+# On compute nodes, neutron-ovn-metadata-agent runs as the neutron user,
+# so logrotate must also operate as neutron to preserve file ownership.
+- name: Fix neutron logrotate to preserve file ownership on compute nodes
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/neutron-common
+    content: |
+      /var/log/neutron/*.log {
+          daily
+          missingok
+          compress
+          delaycompress
+          notifempty
+          copytruncate
+          su neutron neutron
+          create 0640 neutron neutron
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  when: "'compute' in group_names"
+
 - name: Check if reboot is required
   ansible.builtin.stat:
     path: /var/run/reboot-required

@@ -1,6 +1,6 @@
 # Kubernetes
 
-Here's what you need to know about managing a Calico-based k8s cluster:
+## Calico vs. Flannel
 
 What Calico gives you over Flannel:
 
@@ -59,9 +59,9 @@ kubectl get networkpolicies --all-namespaces
 kubectl exec -n kube-system <calico-node-pod> -- calico-node -bird-live
 ```
 
-One thing to watch: Magnum's docs note `cgroup_driver=cgroupfs` should be used with Calico — this is already the default value, so no extra label is needed.
+Magnum's docs note `cgroup_driver=cgroupfs` should be used with Calico — this is already the default value, so no extra label is needed.
 
-Cluster template snippet (for when you deploy):
+Cluster template snippet:
 
 ```bash
 openstack coe cluster template create k8s-calico \
@@ -118,16 +118,21 @@ for iface in public internal admin; do
 done
 ```
 
-### Create a cluster
+### Cluster Management
 
 ```bash
-openstack coe cluster create test-k8s \
-  --cluster-template k8s-calico \
-  --master-count 1 \
-  --node-count 1
-```
+# Create cluster from template
+openstack coe cluster create test-cluster --cluster-template k8s-calico --master-count 1 --node-count 1 --timeout 60
 
-Monitor: `openstack coe cluster show test-k8s -c status -f value` — wait for `CREATE_COMPLETE`.
+# Monitor
+watch -n 30 'openstack coe cluster show test-cluster -f yaml | grep -E "status|faults"'
+
+# Delete a cluster
+openstack coe cluster delete test-cluster
+
+# Watch until it's gone
+watch -n 10 'openstack coe cluster list'
+```
 
 ### Access the cluster
 
@@ -147,15 +152,6 @@ openstack coe cluster template update k8s-calico replace \
   labels='calico_ipv4pool=10.100.0.0/16,...,cloud_provider_tag=v1.28.3,...'
 ```
 
-### Delete a cluster
-
-```bash
-openstack coe cluster delete test-k8s
-# Wait for deletion:
-openstack coe cluster list   # should be empty
-openstack stack list          # Heat stack should be gone
-```
-
 ### SSH into cluster VMs
 
 Magnum VMs run Fedora CoreOS and are on a tenant network behind OVN. Access them via the OVN metadata namespace on the compute host:
@@ -170,27 +166,6 @@ NETNS=$(sudo ip netns list | grep ovnmeta | head -1 | awk '{print $1}')
 # SSH in (uses the keypair from the cluster template)
 sudo ip netns exec "$NETNS" ssh -i /tmp/magnum_key core@<vm-fixed-ip>
 ```
-
-## Known issues
-
-1. **keystone-auth webhook chicken-and-egg.** If `k8s-keystone-auth` can't start, the kube-apiserver Webhook authorization blocks ALL API calls. Workaround: SSH into master, edit `/etc/kubernetes/apiserver` to remove `Webhook` from `--authorization-mode`, restart apiserver, fix the issue, restore from `apiserver.bak`.
-
-## Pods on a Cluster Deploy
-
-| Pod | What it does |
-| --- | --- |
-| `calico-node` (DaemonSet) | Programs BGP routes and network policy rules on each node |
-| `calico-kube-controllers` | Syncs Calico datastore with k8s API (node/policy cleanup) |
-| `coredns` (2 replicas) | Cluster DNS — resolves `service.namespace.svc.cluster.local` |
-| `csi-cinder-controllerplugin` | Manages Cinder volume provisioning/attach/snapshot (6 containers: `csi-attacher`, `csi-provisioner`, `csi-snapshotter`, `csi-resizer`, `liveness-probe`, `cinder-csi-plugin`) |
-| `csi-cinder-nodeplugin` (DaemonSet) | Mounts Cinder volumes into pods on each node |
-| `k8s-keystone-auth` (DaemonSet) | Webhook that authenticates `kubectl` users against Keystone |
-| `openstack-cloud-controller-manager` | Integrates k8s with OpenStack (floating IPs for LoadBalancer services, node labels from Nova metadata) |
-| `kubernetes-dashboard` | Web UI for the cluster |
-| `dashboard-metrics-scraper` | Scrapes metrics for the dashboard |
-| `kube-dns-autoscaler` | Scales coredns replicas based on cluster size |
-| `magnum-metrics-server` | Collects CPU/memory metrics (enables kubectl top) |
-| `npd` (node-problem-detector) | Monitors for node issues (kernel panics, docker hangs, etc.) |
 
 ## `kubernetes-dashboard` Access
 
@@ -215,15 +190,19 @@ You'll need a token to log in:
 kubectl -n kube-system create token kubernetes-dashboard
 ```
 
-Kuberntes command to get ingress:
+Kubernetes command to get ingress:
 
 ```bash
 kubectl get ingress -A -o yaml
 ```
 
-## What defines the pod set?
+## Known issues
 
-Magnum's Heat templates define a base set of system pods that every cluster gets. These are baked into the FCOS driver templates we were reading on `cloud-4core` (`kubeminion.yaml`, `kubemaster.yaml`, and the boot scripts they invoke). The bootstrap scripts deploy:
+1. **keystone-auth webhook chicken-and-egg.** If `k8s-keystone-auth` can't start, the kube-apiserver Webhook authorization blocks ALL API calls. Workaround: SSH into master, edit `/etc/kubernetes/apiserver` to remove `Webhook` from `--authorization-mode`, restart apiserver, fix the issue, restore from `apiserver.bak`.
+
+## Magnum Pod Set
+
+Magnum's Heat templates define a base set of system pods that every cluster gets. These are baked into the FCOS driver templates on `cloud-4core` (`kubeminion.yaml`, `kubemaster.yaml`, and the boot scripts they invoke). The bootstrap scripts deploy:
 
 - calico (from your network-driver calico choice)
 - coredns (hardcoded)
@@ -235,7 +214,7 @@ Magnum's Heat templates define a base set of system pods that every cluster gets
 
 Some are toggleable via labels (e.g. npd_enabled, keystone_auth_enabled), but you don't define individual pods in your template — the template just picks the driver and labels that control feature flags. Once the cluster is running, you deploy your own pods on top with kubectl apply.
 
-They're podman containers managed by systemd, not Kubernetes pods. That's why they don't show in kubectl get pods -A.
+They're podman containers managed by `systemd`, not Kubernetes pods. That's why they don't show in kubectl get pods -A.
 
 The control plane components are:
 
@@ -280,3 +259,43 @@ VM (Fedora CoreOS)
 ```
 
 Podman and containerd are two separate container runtimes running side by side. Podman handles the "bootstrap" containers that need to exist before Kubernetes works. Containerd handles everything Kubernetes schedules. This is specific to Magnum's FCOS driver — the more common kubeadm approach uses static pods (YAML files in /etc/kubernetes/manifests/ that kubelet picks up directly) instead of podman, keeping everything in one runtime.
+
+## Pods on a Magnum Cluster Deploy
+
+### All Kubernetes-managed pods across the entire cluster
+
+| Pod | What it does |
+| --- | --- |
+| `calico-node` (DaemonSet) | Programs BGP routes and network policy rules on each node |
+| `calico-kube-controllers` | Syncs Calico datastore with k8s API (node/policy cleanup) |
+| `coredns` (2 replicas) | Cluster DNS — resolves `service.namespace.svc.cluster.local` |
+| `csi-cinder-controllerplugin` | Manages Cinder volume provisioning/attach/snapshot (6 containers: `csi-attacher`, `csi-provisioner`, `csi-snapshotter`, `csi-resizer`, `liveness-probe`, `cinder-csi-plugin`) |
+| `csi-cinder-nodeplugin` (DaemonSet) | Mounts Cinder volumes into pods on each node |
+| `k8s-keystone-auth` (DaemonSet) | Webhook that authenticates `kubectl` users against Keystone |
+| `openstack-cloud-controller-manager` | Integrates k8s with OpenStack (floating IPs for LoadBalancer services, node labels from Nova metadata) |
+| `kubernetes-dashboard` | Web UI for the cluster |
+| `dashboard-metrics-scraper` | Scrapes metrics for the dashboard |
+| `kube-dns-autoscaler` | Scales coredns replicas based on cluster size |
+| `magnum-metrics-server` | Collects CPU/memory metrics (enables kubectl top) |
+| `npd` (node-problem-detector) | Monitors for node issues (kernel panics, docker hangs, etc.) |
+
+On the worker node specifically, only the DaemonSet pods run:
+
+| Pod | Why it's on every node |
+| --- | --- |
+| `calico-node` | Programs BGP routes and network policy on that node |
+| `csi-cinder-nodeplugin` | Mounts Cinder volumes into pods on that node |
+| `k8s-keystone-auth` | Webhook auth (DaemonSet) |
+| `npd` | Node problem detector |
+
+The rest (`coredns`, `csi-cinder-controllerplugin`, `openstack-cloud-controller-manager`, `dashboard`, `calico-kube-controllers`, etc.) are Deployments/ReplicaSets that run on the master, because workers don't tolerate the master taint. User workloads go on the worker.
+
+## Monitoring
+
+`npd` (`node-problem-detector`) watches for kernel panics, docker hangs, etc. and reports them as Kubernetes node conditions.
+
+`magnum-metrics-server` enables `kubectl` top nodes/pods for CPU/memory.
+
+None of that feeds into our Loki/Prometheus stack — the cluster VMs are isolated on a tenant network behind OVN. Our Promtail/node_exporter don't run inside the Magnum VMs. 
+
+To monitor them, we'd need to deploy Prometheus + Grafana inside the cluster (e.g., via the kube-prometheus-stack Helm chart), or expose metrics back to the management network.

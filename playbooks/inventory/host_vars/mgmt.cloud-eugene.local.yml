@@ -30,3 +30,10 @@ cinder_vg_name: cinder-volumes
 swift_devices:
   - /dev/sdc
   - /dev/sdd
+
+# Host-level OpenStack service log directories
+# cinder-volume, cinder-backup, ceilometer-polling, and neutron-ovn-metadata-agent run on the host (not in LXC)
+host_openstack_log_dirs:
+  - { dir: ceilometer, owner: ceilometer }
+  - { dir: cinder, owner: cinder }
+  - { dir: neutron, owner: neutron }
