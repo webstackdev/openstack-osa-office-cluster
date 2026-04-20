@@ -273,16 +273,25 @@ openstack_user_identity:
 # OSA defaults to min(vcpus * 2, 16) workers per service, which on cloud-4core
 # (8 threads) yields 16 workers each — far too many for a home lab with ~34 qps
 # total. These overrides free ~7 GB RAM on the controller node.
+#
+# uwsgi API workers
 neutron_wsgi_processes: 4
 nova_wsgi_processes: 4
 keystone_wsgi_processes: 4
 heat_wsgi_processes: 4
+gnocchi_wsgi_processes: 2
 placement_wsgi_processes: 4
 zun_wsgi_processes: 2
 octavia_wsgi_processes: 2
+magnum_wsgi_processes: 2
+#
+# Backend / engine workers
+heat_api_workers: 2
+heat_engine_workers: 2
+gnocchi_metricd_workers: 2
+ceilometer_notification_workers: 2
 trove_api_workers: 2
 trove_conductor_workers: 2
-magnum_wsgi_processes: 2
 magnum_conductor_workers: 2
 
 # ============================================================================
