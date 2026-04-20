@@ -38,3 +38,10 @@ openstack_kernel_modules:
   - 8021q
   - bonding
   - openvswitch
+
+# Registry TLS (Let's Encrypt via Porkbun DNS-01)
+# Add vault_registry_acme_email, vault_registry_porkbun_api_key, and
+# vault_registry_porkbun_secret_api_key to the Ansible vault.
+registry_acme_email: "{{ vault_registry_acme_email }}"
+registry_porkbun_api_key: "{{ vault_registry_porkbun_api_key }}"
+registry_porkbun_secret_api_key: "{{ vault_registry_porkbun_secret_api_key }}"

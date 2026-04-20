@@ -38,6 +38,8 @@ Four isolated networks, each on a dedicated physical NIC per node, connected via
 
 The provider network NICs carry no IP addresses — they are raw L2 ports bridged into OVS (`br-vlan`). A dedicated consumer router on the provider subnet handles upstream NAT for floating IPs.
 
+On the management network, the RT-AX58U router is also the DNS resolver and has host overrides for `openstack-office-cluster.cloud` names (for example, `mgmt.openstack-office-cluster.cloud` -> `192.168.50.168`). The Magnum `k8s-calico` template is configured with `dns_nameserver=192.168.50.1` so Fedora CoreOS cluster nodes can resolve these internal names.
+
 All compute nodes act as **OVN distributed gateways** (DVR), so north-south traffic egresses directly from the node hosting the VM rather than hairpinning through the controller.
 
 ## What the Playbooks Do
@@ -73,7 +75,9 @@ Deployed via the `deploy_monitoring` role:
 
 ### Container Image Registry
 
-A Docker Distribution (registry:2) instance on the controller serves container images to Magnum Kubernetes clusters. A [mirror script](scripts/mirror-magnum-images.sh) pulls required images from upstream registries (registry.k8s.io, quay.io, docker.io) and pushes them under a unified `openstackmagnum/` namespace.
+A Docker Distribution (registry:2) instance on the controller serves container images to Magnum Kubernetes clusters. The `deploy_registry` role also configures the controller's Docker daemon to trust the controller management IP on port `5050` as an insecure registry endpoint, so the mirror workflow survives a clean rebuild. A [mirror script](scripts/mirror-magnum-images.sh) pulls required images from upstream registries (registry.k8s.io, quay.io, docker.io) and pushes them under a unified `openstackmagnum/` namespace.
+
+Run the mirror script from the controller after [playbooks/deploy_registry.yml](playbooks/deploy_registry.yml) completes.
 
 ## Storage
 

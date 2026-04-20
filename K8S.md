@@ -68,7 +68,7 @@ openstack coe cluster template create k8s-calico \
   --image fedora-coreos-43 \
   --keypair magnum-key \
   --external-network provider-net \
-  --dns-nameserver 8.8.8.8 \
+  --dns-nameserver 192.168.50.1 \
   --master-flavor k8s.small \
   --flavor k8s.small \
   --network-driver calico \
@@ -78,8 +78,10 @@ openstack coe cluster template create k8s-calico \
   --master-lb-enabled \
   --floating-ip-enabled \
   --docker-storage-driver overlay2 \
-  --labels calico_ipv4pool=10.100.0.0/16,calico_ipv4pool_ipip=Off,calico_tag=v3.26.4,cgroup_driver=cgroupfs,container_runtime=containerd,kube_tag=v1.28.9-rancher1,containerd_version=1.7.25,containerd_tarball_sha256=6b987a57a3f2257ca2cc5f4697b481eec917bd2085299aeab0547d388ff8b983,cloud_provider_tag=v1.28.3,cinder_csi_plugin_tag=v1.28.3,k8s_keystone_auth_tag=v1.28.3
+  --labels calico_ipv4pool=10.100.0.0/16,calico_ipv4pool_ipip=Off,calico_tag=v3.26.4,cgroup_driver=cgroupfs,container_runtime=containerd,kube_tag=v1.28.9-rancher1,containerd_version=1.7.25,containerd_tarball_sha256=6b987a57a3f2257ca2cc5f4697b481eec917bd2085299aeab0547d388ff8b983,cloud_provider_tag=v1.28.3,cinder_csi_plugin_tag=v1.28.3,k8s_keystone_auth_tag=v1.28.3,container_infra_prefix=mgmt.openstack-office-cluster.cloud:5050/openstackmagnum/
 ```
+
+`container_infra_prefix` tells Magnum where to pull system pod images from. The registry must serve HTTPS — containerd requires TLS; the `deploy_registry` role provisions a Let's Encrypt certificate for `mgmt.openstack-office-cluster.cloud` and configures `registry:2` to use it.
 
 ### Label reference
 
@@ -199,6 +201,8 @@ kubectl get ingress -A -o yaml
 ## Known issues
 
 1. **keystone-auth webhook chicken-and-egg.** If `k8s-keystone-auth` can't start, the kube-apiserver Webhook authorization blocks ALL API calls. Workaround: SSH into master, edit `/etc/kubernetes/apiserver` to remove `Webhook` from `--authorization-mode`, restart apiserver, fix the issue, restore from `apiserver.bak`.
+
+2. **`--insecure-registry` does not fix FCOS + containerd pulls.** In the Fedora CoreOS driver path, Magnum writes `INSECURE_REGISTRY_URL` into Heat params and uses it only when patching Docker's `/etc/sysconfig/docker`. With `container_runtime=containerd`, Magnum installs and starts containerd but does not generate insecure registry configuration for containerd, so image pulls default to HTTPS and fail with `http: server gave HTTP response to HTTPS client`. **Fix**: the `deploy_registry` role now issues a Let's Encrypt certificate via DNS-01 (Porkbun) for `mgmt.openstack-office-cluster.cloud` and configures the `registry:2` container to serve HTTPS on port 5050. The cluster template uses `container_infra_prefix=mgmt.openstack-office-cluster.cloud:5050/openstackmagnum/` so containerd's HTTPS pull succeeds with the trusted LE certificate.
 
 ## Magnum Pod Set
 

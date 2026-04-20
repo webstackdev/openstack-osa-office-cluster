@@ -62,12 +62,16 @@ Interface Type | IP Address Required? | Purpose |
 
 1. RT-AX58U Management Network
 
-- 192.168.50.1   mgmt.router.local
-- 192.168.50.210  mgmt.workstation.local
-- 192.168.50.171  mgmt.cloud-6core.local
-- 192.168.50.178  mgmt.cloud-celeron.local
-- 192.168.50.168  mgmt.cloud-4core.local
-- 192.168.50.234  mgmt.cloud-eugene.local
+Domain `openstack-office-cluster.cloud` is configured on the RT-AX58U with per-host overrides resolving to private IPs. All management-network clients (lab nodes + workstation) inherit the router as their DNS server via DHCP and resolve these names correctly. Magnum cluster VMs resolve these names when created from a cluster template with `dns_nameserver=192.168.50.1`.
+
+| Hostname (`.local`) | Hostname (`.cloud`) | IP |
+|---|---|---|
+| mgmt.router.local | — | 192.168.50.1 |
+| mgmt.workstation.local | workstation.openstack-office-cluster.cloud | 192.168.50.210 |
+| mgmt.cloud-6core.local | 6core.openstack-office-cluster.cloud | 192.168.50.171 |
+| mgmt.cloud-celeron.local | celeron.openstack-office-cluster.cloud | 192.168.50.178 |
+| mgmt.cloud-4core.local | mgmt.openstack-office-cluster.cloud | 192.168.50.168 |
+| mgmt.cloud-eugene.local | eugene.openstack-office-cluster.cloud | 192.168.50.234 |
 
 2. RT-AC57U Provider Network
 

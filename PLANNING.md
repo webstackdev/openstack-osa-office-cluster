@@ -3587,3 +3587,24 @@ sudo docker pull docker.io/kubernetesui/dashboard:v2.0.0
 sudo docker tag docker.io/kubernetesui/dashboard:v2.0.0 192.168.50.168:5050/openstackmagnum/dashboard:v2.0.0
 sudo docker push 192.168.50.168:5050/openstackmagnum/dashboard:v2.0.0
 ```
+
+### Cert for Docker Distribution Issues
+
+Whether TLS is the better fix depends on what kind of cert you can realistically serve:
+
+- If you can give the registry a cert chained to a CA the FCOS nodes already trust, then a secure registry is the cleaner design.
+- If you would use a private/self-signed CA, you still have to inject CA trust into the Magnum nodes at boot. That is not much simpler than injecting "treat this registry as insecure" into containerd.
+
+For your current setup, I would not switch to TLS just to solve this one cluster failure. The faster and smaller fix is to teach Magnum's containerd config that 192.168.50.168:5050 is an insecure registry. That directly addresses the observed failure.
+
+A secure registry starts to make more sense if:
+
+- You want this registry to be durable infrastructure used by Magnum, Zun, and anything else going forward.
+- You are willing to codify certificate issuance plus CA distribution to the ephemeral FCOS nodes.
+- You can use a stable DNS name and not just a raw IP.
+- You want to stop carrying runtime-specific insecure-registry exceptions.
+
+So my recommendation is:
+
+- For the current unblock: use the Magnum-side insecure-registry path.
+- For the longer term: move the registry to TLS, but only as a separate cleanup step with proper CA/DNS automation.

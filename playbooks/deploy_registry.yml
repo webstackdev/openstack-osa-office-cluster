@@ -2,13 +2,14 @@
 # Deploy Docker Distribution registry on cloud-4core
 #
 # Partitions /dev/sdc (100 GB registry + ~19 GB mongodb),
-# runs registry:2 container on port 5000.
+# runs registry:2 container on port 5050, and configures the controller's
+# Docker daemon to trust the local HTTP registry endpoint for image mirroring.
 #
 # Usage: ansible-playbook playbooks/deploy_registry.yml
 #
 # After deployment:
-#   docker push 192.168.50.168:5000/myimage:tag
-#   curl http://192.168.50.168:5000/v2/_catalog
+#   docker push 192.168.50.168:5050/myimage:tag
+#   curl http://192.168.50.168:5050/v2/_catalog
 
 - name: Deploy Docker Distribution registry
   hosts: controllers

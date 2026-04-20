@@ -1,0 +1,11 @@
+---
+- name: Restart Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted
+
+- name: Restart registry container
+  community.docker.docker_container:
+    name: "{{ registry_container_name }}"
+    state: started
+    restart: true

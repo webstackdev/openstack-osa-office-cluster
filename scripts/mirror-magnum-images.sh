@@ -8,8 +8,9 @@
 # "192.168.50.168:5050/openstackmagnum/node:v3.26.4".
 #
 # Run this on a host that can pull from the internet AND push to
-# 192.168.50.168:5050 (e.g., cloud-4core itself, which has the registry
-# as an insecure registry).
+# 192.168.50.168:5050. The intended path is cloud-4core after
+# playbooks/deploy_registry.yml has configured Docker to trust the
+# controller's HTTP registry as an insecure endpoint.
 #
 # MAINTENANCE NOTE: When Magnum code or cluster template labels change
 # (e.g., kube_tag, calico_tag, cloud_provider_tag, etc.), update the

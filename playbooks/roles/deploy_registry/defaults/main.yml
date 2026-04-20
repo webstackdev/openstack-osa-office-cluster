@@ -6,3 +6,19 @@ registry_mount: /srv/registry
 registry_port: 5050
 registry_container_name: registry
 registry_image: registry:2
+registry_endpoint_host: "{{ mgmt_ip | default(ansible_host | default(inventory_hostname)) }}"
+registry_insecure_endpoints:
+  - "{{ registry_endpoint_host }}:{{ registry_port }}"
+registry_docker_daemon_config_path: /etc/docker/daemon.json
+
+# TLS settings – Let's Encrypt via DNS-01 (Porkbun)
+# Set registry_porkbun_api_key and registry_porkbun_secret_api_key in vault.
+registry_tls_enabled: true
+registry_tls_hostname: mgmt.openstack-office-cluster.cloud
+registry_tls_cert_dir: /etc/ssl/registry
+registry_tls_cert_file: "{{ registry_tls_cert_dir }}/fullchain.pem"
+registry_tls_key_file: "{{ registry_tls_cert_dir }}/privkey.pem"
+registry_acme_home: /root/.acme.sh
+registry_acme_email: ""  # override in group_vars or vault
+registry_porkbun_api_key: ""  # set in vault
+registry_porkbun_secret_api_key: ""  # set in vault

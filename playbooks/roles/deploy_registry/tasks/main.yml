@@ -1,6 +1,50 @@
 ---
 # Partition /dev/sdc, mount registry partition, run registry:2
 
+- name: Configure Docker daemon for HTTP insecure registry
+  when: not registry_tls_enabled
+  block:
+    - name: Ensure Docker config directory exists
+      ansible.builtin.file:
+        path: "{{ registry_docker_daemon_config_path | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Check for existing Docker daemon config
+      ansible.builtin.stat:
+        path: "{{ registry_docker_daemon_config_path }}"
+      register: registry_docker_daemon_config_stat
+
+    - name: Read existing Docker daemon config
+      ansible.builtin.slurp:
+        path: "{{ registry_docker_daemon_config_path }}"
+      register: registry_docker_daemon_config_raw
+      when: registry_docker_daemon_config_stat.stat.exists
+
+    - name: Build merged Docker daemon config
+      ansible.builtin.set_fact:
+        registry_docker_daemon_config_existing: "{{ (registry_docker_daemon_config_raw.content | b64decode | from_json) if registry_docker_daemon_config_stat.stat.exists else {} }}"
+        registry_docker_daemon_config_merged: >-
+          {{
+            registry_docker_daemon_config_existing
+            | combine(
+                {
+                  'insecure-registries': (
+                    registry_docker_daemon_config_existing.get('insecure-registries', [])
+                    + registry_insecure_endpoints
+                  ) | unique
+                },
+                recursive=True
+              )
+          }}
+
+    - name: Persist Docker daemon config
+      ansible.builtin.copy:
+        content: "{{ registry_docker_daemon_config_merged | to_nice_json }}\n"
+        dest: "{{ registry_docker_daemon_config_path }}"
+        mode: "0644"
+      notify: Restart Docker
+
 - name: Read current partition table
   community.general.parted:
     device: "{{ registry_device }}"
@@ -74,12 +118,58 @@
     state: mounted
     opts: defaults,noatime
 
+- name: Create registry TLS certificate directory
+  ansible.builtin.file:
+    path: "{{ registry_tls_cert_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: registry_tls_enabled
+
+- name: Install acme.sh
+  ansible.builtin.shell:
+    cmd: "curl -fsSL https://get.acme.sh | sh -s email='{{ registry_acme_email }}'"
+    creates: "{{ registry_acme_home }}/acme.sh"
+  when: registry_tls_enabled
+
+- name: Issue TLS certificate via DNS-01 (Porkbun)
+  ansible.builtin.command:
+    cmd: >
+      {{ registry_acme_home }}/acme.sh
+      --issue
+      --dns dns_porkbun
+      -d {{ registry_tls_hostname }}
+      --server letsencrypt
+  environment:
+    PORKBUN_API_KEY: "{{ registry_porkbun_api_key }}"
+    PORKBUN_SECRET_API_KEY: "{{ registry_porkbun_secret_api_key }}"
+  register: acme_issue_result
+  failed_when:
+    - acme_issue_result.rc != 0
+    - "'Domains not changed' not in (acme_issue_result.stdout + acme_issue_result.stderr)"
+  changed_when:
+    - acme_issue_result.rc == 0
+    - "'Domains not changed' not in (acme_issue_result.stdout + acme_issue_result.stderr)"
+  when: registry_tls_enabled
+
+- name: Install certificate to registry TLS directory
+  ansible.builtin.command:
+    cmd: >
+      {{ registry_acme_home }}/acme.sh
+      --install-cert -d {{ registry_tls_hostname }}
+      --fullchain-file {{ registry_tls_cert_file }}
+      --key-file {{ registry_tls_key_file }}
+      --reloadcmd "docker restart {{ registry_container_name }}"
+  changed_when: false
+  when: registry_tls_enabled
+
 - name: Pull registry image
   community.docker.docker_image:
     name: "{{ registry_image }}"
     source: pull
 
-- name: Run registry container
+- name: Run registry container (TLS)
   community.docker.docker_container:
     name: "{{ registry_container_name }}"
     image: "{{ registry_image }}"
@@ -89,12 +179,40 @@
       - "{{ registry_port }}:5000"
     volumes:
       - "{{ registry_mount }}:/var/lib/registry"
+      - "{{ registry_tls_cert_dir }}:{{ registry_tls_cert_dir }}:ro"
+    env:
+      REGISTRY_HTTP_TLS_CERTIFICATE: "{{ registry_tls_cert_file }}"
+      REGISTRY_HTTP_TLS_KEY: "{{ registry_tls_key_file }}"
+  when: registry_tls_enabled
 
-- name: Wait for registry to be healthy
+- name: Run registry container (HTTP)
+  community.docker.docker_container:
+    name: "{{ registry_container_name }}"
+    image: "{{ registry_image }}"
+    state: started
+    restart_policy: always
+    ports:
+      - "{{ registry_port }}:5000"
+    volumes:
+      - "{{ registry_mount }}:/var/lib/registry"
+  when: not registry_tls_enabled
+
+- name: Wait for registry to be healthy (TLS)
   ansible.builtin.uri:
-    url: "http://localhost:{{ registry_port }}/v2/"
+    url: "https://{{ registry_tls_hostname }}:{{ registry_port }}/v2/"
     status_code: 200
   register: registry_health
   retries: 10
   delay: 3
   until: registry_health.status == 200
+  when: registry_tls_enabled
+
+- name: Wait for registry to be healthy (HTTP)
+  ansible.builtin.uri:
+    url: "http://localhost:{{ registry_port }}/v2/"
+    status_code: 200
+  register: registry_health_http
+  retries: 10
+  delay: 3
+  until: registry_health_http.status == 200
+  when: not registry_tls_enabled
