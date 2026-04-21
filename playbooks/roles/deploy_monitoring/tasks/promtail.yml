@@ -103,6 +103,34 @@
         default: true
         state: present
 
+- name: Grant promtail access to OpenStack LXC log files
+  when: is_controller | default(false)
+  block:
+    - name: Install acl package for OpenStack log ACLs
+      ansible.builtin.apt:
+        name: acl
+        state: present
+
+    - name: Set ACL on OpenStack log root for promtail traversal
+      ansible.posix.acl:
+        path: /openstack/log
+        entity: promtail
+        etype: user
+        permissions: rX
+        recursive: true
+        state: present
+      notify: Restart promtail
+
+    - name: Set default ACL on OpenStack log root for promtail
+      ansible.posix.acl:
+        path: /openstack/log
+        entity: promtail
+        etype: user
+        permissions: rX
+        default: true
+        state: present
+      notify: Restart promtail
+
 - name: Deploy promtail config
   ansible.builtin.template:
     src: promtail.yml.j2

@@ -50,6 +50,41 @@
   when: "'br-mgmt-port-' not in configure_networking_nm_connections.stdout"
   changed_when: true
 
+- name: Read br-mgmt static routes
+  ansible.builtin.command: nmcli -g ipv4.routes connection show br-mgmt
+  register: configure_networking_br_mgmt_routes
+  changed_when: false
+
+- name: Persist br-mgmt static routes
+  ansible.builtin.command: >
+    nmcli connection modify br-mgmt
+    ipv4.routes "{{ (mgmt_static_routes | default([])) | join(', ') }}"
+  when: >-
+    (mgmt_static_routes | default([])) !=
+    (
+      configure_networking_br_mgmt_routes.stdout
+      | replace(',', '\n')
+      | splitlines()
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    )
+  changed_when: true
+
+- name: Activate br-mgmt after static route changes
+  ansible.builtin.command: nmcli connection up br-mgmt
+  when: >-
+    (mgmt_static_routes | default([])) !=
+    (
+      configure_networking_br_mgmt_routes.stdout
+      | replace(',', '\n')
+      | splitlines()
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    )
+  changed_when: true
+
 - name: Create br-vxlan bridge
   ansible.builtin.command: >
     nmcli connection add type bridge con-name br-vxlan ifname br-vxlan

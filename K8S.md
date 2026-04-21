@@ -124,13 +124,13 @@ done
 
 ```bash
 # Create cluster from template
-openstack coe cluster create test-cluster --cluster-template k8s-calico --master-count 1 --node-count 1 --timeout 60
+openstack coe cluster create prod-cluster --cluster-template k8s-calico --master-count 1 --node-count 1 --timeout 60
 
 # Monitor
-watch -n 30 'openstack coe cluster show test-cluster -f yaml | grep -E "status|faults"'
+watch -n 30 'openstack coe cluster show prod-cluster -f yaml | grep -E "status|faults"'
 
 # Delete a cluster
-openstack coe cluster delete test-cluster
+openstack coe cluster delete prod-cluster
 
 # Watch until it's gone
 watch -n 10 'openstack coe cluster list'
@@ -140,7 +140,7 @@ watch -n 10 'openstack coe cluster list'
 
 ```bash
 # Generate kubeconfig (writes to current dir)
-eval $(openstack coe cluster config test-k8s)
+eval $(openstack coe cluster config prod-k8s)
 kubectl get nodes
 kubectl get pods -A
 ```

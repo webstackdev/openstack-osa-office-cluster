@@ -75,6 +75,13 @@
         enabled: true
         state: started
 
+    - name: Disable conflicting lxc-dnsmasq service
+      ansible.builtin.systemd:
+        name: lxc-dnsmasq
+        enabled: false
+        state: stopped
+      failed_when: false
+
     - name: Fix LXC_NETWORK to use CIDR notation in /etc/default/lxc-net
       ansible.builtin.lineinfile:
         path: /etc/default/lxc-net
