@@ -363,6 +363,10 @@ cinder_cinder_conf_overrides:
     use_journal: false
     use_stderr: false
     log_dir: /var/log/cinder
+  database:
+    # Recycle pooled DB connections well before MariaDB/Haproxy idle handling.
+    # Matching the server timeout caused stale-socket failures during recovery.
+    connection_recycle_time: 300
 
 nova_nova_conf_overrides:
   DEFAULT:
